@@ -9,7 +9,7 @@ from ..database import get_db
 from ..models import AgentRelease, Device, TamperEvent
 from ..schemas import PolicyIn, ReleaseIn
 from ..scope import Scope, get_scope, get_scoped_device, platform_admin, scoped, write_scope
-from ..security import current_user
+from ..security import current_user, require_admin
 from ..services import fleet, manifest, tamper
 from ..services.versions import parse
 
@@ -93,12 +93,17 @@ def security_status(db: Session = Depends(get_db), scope: Scope = Depends(get_sc
 
 
 @router.post("/security/audit/verify")
-def verify(db: Session = Depends(get_db), scope: Scope = Depends(write_scope)):
-    return tamper.verify_chain(db, scope.client_id)
+def verify(db: Session = Depends(get_db), scope: Scope = Depends(get_scope), _=Depends(require_admin)):
+    """One client's record, or (platform, no client picked) every client's."""
+    if scope.client_id is not None:
+        return tamper.verify_chain(db, scope.client_id)
+    results = [tamper.verify_chain(db, cid) for (cid,) in db.query(TamperEvent.client_id).distinct()]
+    bad = next((r for r in results if not r["ok"]), None)
+    return bad or {"ok": True, "events": sum(r["events"] for r in results), "broken_at": None}
 
 
 @router.post("/devices/{device_id}/tamper/clear")
-def clear(device_id: str, db: Session = Depends(get_db), scope: Scope = Depends(write_scope), user=Depends(current_user)):
-    d = get_scoped_device(db, device_id, scope)
+def clear(device_id: str, db: Session = Depends(get_db), scope: Scope = Depends(get_scope), user=Depends(require_admin)):
+    d = get_scoped_device(db, device_id, scope)          # the device names its own client, so no client needs picking first
     tamper.clear_flag(db, d, user.username)
     return {"ok": True}

@@ -252,3 +252,19 @@ def test_server_signing_key_is_stable(client):
     from app.database import SessionLocal
     with SessionLocal() as db:
         assert manifest.public_key_b64(db) == manifest.public_key_b64(db)
+
+
+def test_viewers_cannot_clear_flags_and_platform_can_without_picking_a_client(client, admin, fresh):
+    d = fresh("TP-18")
+    d.call("POST", "/device/tamper", {"events": [{"kind": "code_modified", "detail": "x"}]})
+    created = client.post("/clients", headers=admin, json={"name": "Second Co"}).json()       # two clients: no implicit scope any more
+    try:
+        client.post("/users", headers=admin, json={"username": "tp_viewer", "password": "viewerpass1", "role": "viewer"})
+        tok = client.post("/auth/login", json={"username": "tp_viewer", "password": "viewerpass1"}).json()["access_token"]
+        assert client.post("/devices/TP-18/tamper/clear", headers={"Authorization": f"Bearer {tok}"}).status_code == 403
+        assert client.post("/devices/TP-18/tamper/clear", headers=admin).status_code == 200
+        assert client.post("/security/audit/verify", headers=admin).json()["ok"] is True
+    finally:
+        client.delete(f"/clients/{created['id']}", headers=admin)
+        uid = next(u["id"] for u in client.get("/users", headers=admin).json() if u["username"] == "tp_viewer")
+        client.delete(f"/users/{uid}", headers=admin)
