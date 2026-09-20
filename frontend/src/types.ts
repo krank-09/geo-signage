@@ -1,6 +1,9 @@
 export type ConnectionType = 'wifi' | 'ethernet' | 'cellular_4g' | 'cellular_5g' | 'other'
 
 export interface Device {
+  client_id: number | null
+  os_name: string | null; os_version: string | null; os_arch: string | null; runtime_version: string | null; capabilities: string[]
+  protection: 'protected' | 'unprotected'; key_bound_at: string | null; tamper_state: 'flagged' | null; tamper_flagged_at: string | null
   id: number; device_id: string; name: string; status: 'online' | 'offline'; registered: boolean
   group_id: number | null; group: string | null; latitude: number | null; longitude: number | null
   last_seen: string | null; zone_id: number | null; zone: string | null; content_version: string | null
@@ -26,16 +29,35 @@ export interface Broadcast {
   created_by: string; created_at: string; expires_at: string | null; ended_at: string | null; active: boolean; remaining_seconds: number | null
 }
 export interface Alert {
-  id: number; device_id: string; device_name?: string | null; kind: 'offline' | 'health_low'; message: string; health: number
+  id: number; device_id: string; device_name?: string | null; kind: 'offline' | 'health_low' | 'tamper'; message: string; health: number
   created_at: string; resolved_at: string | null; acknowledged_at: string | null; acknowledged_by: string | null
 }
 export interface City { id: string; name: string; state: string; center: [number, number]; source: 'osm' | 'approx'; area_km2: number; vertices: number; zone_exists: boolean }
 export interface CityDetail extends Omit<City, 'zone_exists' | 'vertices'> { polygon: [number, number][] }
 export interface DiscoveredAgent { id: string; name: string; latitude: number | null; longitude: number | null; connection_type: ConnectionType | null; software_version: string | null; seconds_ago: number; zones: string[] }
-export interface AppUser { id: number; username: string; role: 'admin' | 'viewer' | 'pending'; email: string | null; source: 'local' | 'firebase'; created_at: string }
+export interface AppUser { client_id?: number | null; id: number; username: string; role: 'admin' | 'viewer' | 'pending'; email: string | null; source: 'local' | 'firebase'; created_at: string }
 export interface AuthConfig {
   local_login: boolean
   firebase: { apiKey: string; authDomain: string; projectId: string; appId: string; emulatorHost: string | null } | null
 }
 
 export const CONNECTION_LABELS: Record<ConnectionType, string> = { wifi: 'Wi-Fi', ethernet: 'Ethernet', cellular_4g: 'Cellular 4G', cellular_5g: 'Cellular 5G', other: 'Other' }
+
+export interface ClientInfo {
+  id: number; name: string; slug: string; active: boolean; device_limit: number | null; enrollment_key: string | null
+  devices: number; devices_online: number; tampered: number; content: number; zones: number; users: number
+}
+export interface FleetRow {
+  device_id: string; name: string; client_id: number | null; status: string; software_version: string | null; os_name: string | null
+  os_version: string | null; os_arch: string | null; runtime_version: string | null; capabilities: string[]
+  compatibility: 'ok' | 'outdated' | 'unsupported' | 'unknown'; protection: 'protected' | 'unprotected'; tamper_state: 'flagged' | null
+}
+export interface FleetInventory {
+  policy: { recommended_version: string | null; supported_version: string | null }
+  devices: FleetRow[]
+  summary: { total: number; by_os: Record<string, number>; by_version: Record<string, number>; by_arch: Record<string, number>
+    by_compatibility: Record<string, number>; by_protection: Record<string, number>; tampered: number }
+}
+export interface TamperEvent { id: number; client_id: number | null; device_id: string; kind: string; severity: 'info' | 'warning' | 'critical'; source: string; detail: string; created_at: string; hash: string }
+export interface SecurityStatus { mode: string; server_key_fingerprint: string; protected: number; unprotected: number; flagged: string[]; audit: { ok: boolean; events: number; broken_at: number | null } | null }
+export interface Release { id: number; version: string; code_hash: string; note: string; created_at: string }

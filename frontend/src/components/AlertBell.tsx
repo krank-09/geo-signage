@@ -40,7 +40,7 @@ export function AlertBell({ alerts, onChange }: { alerts: Alert[]; onChange: () 
               <li key={a.id} className="px-5 py-3 text-sm">
                 <div className="flex items-start justify-between gap-2">
                   <div><b>{a.device_name || a.device_id}</b> <span className="text-xs text-ink-400">{a.device_id}</span>
-                    <p className="mt-0.5 text-ink-600">{a.kind === 'offline' ? 'Went offline' : `Health ${a.health}%`}</p></div>
+                    <p className="mt-0.5 text-ink-600">{a.kind === 'offline' ? 'Went offline' : a.kind === 'tamper' ? 'Possible tampering' : `Health ${a.health}%`}</p></div>
                   <span className="shrink-0 text-xs text-ink-400">{ago(a.created_at)}</span>
                 </div>
                 <p className="mt-1 text-xs text-ink-500">{a.message}</p>

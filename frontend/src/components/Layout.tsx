@@ -2,8 +2,8 @@ import { ReactNode, Suspense, useCallback, useEffect, useRef, useState } from 'r
 import { Link, NavLink, useLocation, useNavigate, useOutlet } from 'react-router-dom'
 import { AnimatePresence, motion } from 'motion/react'
 import { SignOut, Television } from '@phosphor-icons/react'
-import { api, getRole } from '../services/api'
-import type { Alert } from '../types'
+import { api, getClientId, getRole, isPlatform, setClientId } from '../services/api'
+import type { Alert, ClientInfo } from '../types'
 import { useLive } from '../hooks/useLive'
 import { AlertBell } from './AlertBell'
 import { useToast } from './Toasts'
@@ -11,8 +11,26 @@ import { Avatar, PulseDot, Skeleton } from './ui'
 
 const nav: [string, string][] = [
   ['/', 'Overview'], ['/devices', 'Devices'], ['/content', 'Content'], ['/zones', 'Zones & map'],
-  ['/schedules', 'Schedules'], ['/broadcast', 'Broadcast'], ['/emergency', 'Emergency'], ['/monitoring', 'Monitoring'], ['/users', 'Users'],
+  ['/schedules', 'Schedules'], ['/broadcast', 'Broadcast'], ['/emergency', 'Emergency'], ['/monitoring', 'Monitoring'],
+  ['/fleet', 'Fleet'], ['/security', 'Security'], ['/clients', 'Clients'], ['/users', 'Users'],
 ]
+
+/** Platform administrators pick which client they are working in (or "All clients" to look across them). */
+function ClientSwitcher() {
+  const [clients, setClients] = useState<ClientInfo[]>([])
+  useEffect(() => { api.get<ClientInfo[]>('/clients').then((r) => setClients(r.data)).catch(() => {}) }, [])
+  const current = getClientId() ?? ''
+  return (
+    <label className="glass hidden shrink-0 items-center gap-2 rounded-full px-3.5 py-2 text-xs font-semibold md:flex">
+      <span className="text-ink-500">Client</span>
+      <select aria-label="Working client" value={current} className="max-w-40 bg-transparent font-bold outline-none"
+        onChange={(e) => { setClientId(e.target.value ? +e.target.value : null); window.location.reload() }}>
+        <option value="">All clients</option>
+        {clients.map((c) => <option key={c.id} value={c.id}>{c.name}{c.active ? '' : ' (suspended)'}</option>)}
+      </select>
+    </label>
+  )
+}
 
 /** Keeps the outgoing page's element alive while it animates out (otherwise it would flip to the new route instantly). */
 function Frozen({ children }: { children: ReactNode }) {
@@ -81,7 +99,7 @@ export default function Layout() {
           </Link>
 
           <nav ref={navRef} aria-label="Primary" className="no-scrollbar flex min-w-0 flex-1 items-center gap-1 overflow-x-auto rounded-full bg-ink-900 p-1.5 shadow-[0_18px_40px_-18px_rgb(20_22_43/0.8)]" style={{ scrollbarWidth: 'none' }}>
-            {nav.map(([to, label]) => (
+            {nav.filter(([to]) => to !== '/clients' || isPlatform()).map(([to, label]) => (
               <NavLink key={to} to={to} end={to === '/'} className="relative shrink-0 rounded-full px-4 py-2 text-[13px] font-semibold transition-colors">
                 {({ isActive }) => (
                   <>
@@ -98,10 +116,11 @@ export default function Layout() {
           <div className="glass hidden shrink-0 items-center gap-2 rounded-full px-3.5 py-2.5 text-xs font-semibold lg:flex" title={live ? 'Receiving live updates' : 'Reconnecting…'}>
             <PulseDot online={live} />{live ? 'Live' : 'Reconnecting'}
           </div>
+          {isPlatform() && <ClientSwitcher />}
           <AlertBell alerts={alerts} onChange={loadAlerts} />
           <div className="glass group relative flex shrink-0 items-center gap-2 rounded-full py-1 pl-1 pr-1.5">
             <Avatar label={username} text={username.slice(0, 2).toUpperCase()} size={36} tint="#5b49eb" />
-            <span className="hidden pr-1 text-left text-xs leading-tight md:block"><b className="block text-[13px]">{username}</b><span className="text-ink-500">{getRole()}</span></span>
+            <span className="hidden pr-1 text-left text-xs leading-tight md:block"><b className="block text-[13px]">{username}</b><span className="text-ink-500">{getRole()}{localStorage.getItem('client_name') ? ` · ${localStorage.getItem('client_name')}` : isPlatform() ? ' · platform' : ''}</span></span>
             <button onClick={logout} aria-label="Log out" title="Log out" className="grid size-8 place-items-center rounded-full text-ink-500 transition hover:bg-red-50 hover:text-red-600"><SignOut size={17} weight="bold" aria-hidden="true" /></button>
           </div>
         </div>

@@ -41,7 +41,7 @@ export default function Devices() {
             <tbody className="divide-y divide-ink-100/70">
               {devices.map((d) => (
                 <tr key={d.device_id} onClick={() => setOpen(d.device_id)} className="cursor-pointer hover:bg-white/60">
-                  <td className="py-2.5"><div className="flex items-center gap-3"><Avatar label={d.device_id} size={38} /><div><b>{d.device_id}</b><div className="text-xs text-ink-500">{d.name}</div></div></div></td>
+                  <td className="py-2.5"><div className="flex items-center gap-3"><Avatar label={d.device_id} size={38} /><div><b>{d.device_id}</b> {d.tamper_state && <Badge tone="red">Flagged</Badge>}<div className="text-xs text-ink-500">{d.name}</div></div></div></td>
                   <td><StatusBadge status={d.status} /></td>
                   <td className="min-w-32"><HealthBar health={d.health} threshold={threshold} reasons={d.health_reasons} /></td>
                   <td>{d.connection_type ? <Badge tone="gray">{CONNECTION_LABELS[d.connection_type]}</Badge> : '—'}</td><td>{d.group || '—'}</td>

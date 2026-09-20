@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api } from '../services/api'
+import { api, getClientId } from '../services/api'
 import type { Device } from '../types'
 import { useLive } from './useLive'
 
@@ -22,6 +22,8 @@ export function useDevices({ pollMs = 0, onEvent }: { pollMs?: number; onEvent?:
 
   const live = useLive((e) => {
     if (e.event === 'device_update') {
+      const cid = getClientId()
+      if (cid && String(e.device.client_id) !== cid) return       // a platform user looking at one client ignores the others
       setDevices((prev) => {
         const list = prev ?? []
         return list.some((d) => d.device_id === e.device.device_id)

@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'motion/react'
 import { ArrowRight, GoogleLogo, MapPin, Television, WifiSlash } from '@phosphor-icons/react'
-import { api, errMsg } from '../services/api'
+import { api, errMsg, saveSession } from '../services/api'
 import type { AuthConfig } from '../types'
 import { Button, ErrorNote, Field, inputCls } from '../components/ui'
 
@@ -28,10 +28,8 @@ export default function Login() {
   useEffect(() => { api.get<AuthConfig>('/auth/config').then((r) => { setCfg(r.data); if (r.data.firebase) setView('firebase') }).catch(() => {}) }, [])
   const fb = cfg?.firebase ?? null
 
-  const finish = (data: { access_token: string; role: string; username: string }) => {
-    localStorage.setItem('token', data.access_token)
-    localStorage.setItem('role', data.role)
-    localStorage.setItem('username', data.username)
+  const finish = (data: Parameters<typeof saveSession>[0]) => {
+    saveSession(data)
     navigate('/')
     window.location.reload()
   }

@@ -14,6 +14,9 @@ const Broadcast = lazy(() => import('./pages/Broadcast'))
 const Emergency = lazy(() => import('./pages/Emergency'))
 const Monitoring = lazy(() => import('./pages/Monitoring'))
 const Users = lazy(() => import('./pages/Users'))
+const Fleet = lazy(() => import('./pages/Fleet'))
+const Security = lazy(() => import('./pages/Security'))
+const Clients = lazy(() => import('./pages/Clients'))
 
 export default function App() {
   return (
@@ -28,6 +31,9 @@ export default function App() {
         <Route path="/broadcast" element={<Broadcast />} />
         <Route path="/emergency" element={<Emergency />} />
         <Route path="/monitoring" element={<Monitoring />} />
+        <Route path="/fleet" element={<Fleet />} />
+        <Route path="/security" element={<Security />} />
+        <Route path="/clients" element={<Clients />} />
         <Route path="/users" element={<Users />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

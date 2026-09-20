@@ -42,6 +42,12 @@ export function DeviceDetailModal({ id, groups, onClose, onChanged }: { id: stri
     <Modal title={`${d.device_id} · ${d.name}`} onClose={onClose} wide>
       {msg && <p className="mb-3 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-800">{msg}</p>}
       {token && <div className="mb-4"><TokenBox deviceId={d.device_id} token={token} /></div>}
+      {d.tamper_state && (
+        <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-800">
+          <b>Possible tampering.</b> <span className="flex-1">Flagged {ago(d.tamper_flagged_at)}. The display keeps working. See Security for the details.</span>
+          {admin && <Button variant="secondary" className="!px-3 !py-1 text-xs" onClick={() => act(async () => { await api.post(`/devices/${id}/tamper/clear`); load(); onChanged() }, 'Flag cleared')}>Clear flag</Button>}
+        </div>
+      )}
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-1 text-sm">
           <h4 className="mb-2 font-semibold">Status</h4>
@@ -53,6 +59,8 @@ export function DeviceDetailModal({ id, groups, onClose, onChanged }: { id: stri
           <p>Should play: <b>{d.resolved?.items.map((i) => i.name).join(', ') || '—'}</b> <span className="text-ink-500">({d.resolved?.reason})</span></p>
           <p>Reported playing: <b>{d.current_content || '—'}</b></p>
           <p>CPU {d.cpu ?? '—'}% · Mem {d.memory ?? '—'}% · {d.network || '—'} · v{d.software_version || '—'}</p>
+          <p>System: <b>{d.os_name ? `${d.os_name} ${d.os_version ?? ''} (${d.os_arch ?? '?'})` : 'not reported'}</b>{d.runtime_version ? ` · Python ${d.runtime_version}` : ''}</p>
+          <p>Identity: {d.protection === 'protected' ? <Badge tone="green">key bound {ago(d.key_bound_at)}</Badge> : <Badge tone="amber">no identity key (older agent)</Badge>}</p>
         </div>
         <div>
           <h4 className="mb-2 font-semibold">Remote configuration</h4>
