@@ -101,6 +101,12 @@ def make_server(agent, port: int) -> ThreadingHTTPServer:
 
         def do_POST(self):
             n = int(self.headers.get("Content-Length") or 0)
+            if self.path == "/api/screenshot":
+                if not secrets.compare_digest(self.headers.get("X-Page-Token", ""), agent.page_token):
+                    return self._json({"ok": False, "error": "page token required"}, 403)
+                if n > 600 * 1024:
+                    return self._json({"ok": False, "error": "too large"}, 413)
+                return self._json({"ok": agent.accept_screenshot(self.rfile.read(n))})
             try:
                 data = json.loads(self.rfile.read(n) or b"{}")
             except json.JSONDecodeError:

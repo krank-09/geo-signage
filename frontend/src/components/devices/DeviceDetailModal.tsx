@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, errMsg, isAdmin } from '../../services/api'
-import type { Device, Group, LogEntry } from '../../types'
+import { api, errMsg, getToken, isAdmin } from '../../services/api'
+import type { Device, Group, LogEntry, RouteInfo, TrackPoint, Zone } from '../../types'
+import MapView from '../MapView'
 import { useLive } from '../../hooks/useLive'
 import { CONNECTION_LABELS } from '../../types'
 import type { ConnectionType } from '../../types'
@@ -19,6 +20,10 @@ export function DeviceDetailModal({ id, groups, onClose, onChanged }: { id: stri
   const [threshold] = useHealthThreshold()
   const [msg, setMsg] = useState('')
   const [token, setToken] = useState('')
+  const [routes, setRoutes] = useState<RouteInfo[]>([])
+  const [trail, setTrail] = useState<TrackPoint[] | null>(null)
+  const [zones, setZones] = useState<Zone[]>([])
+  const [noShot, setNoShot] = useState(false)
   const admin = isAdmin()
 
   const load = useCallback(async () => {
@@ -27,6 +32,8 @@ export function DeviceDetailModal({ id, groups, onClose, onChanged }: { id: stri
     setCfg((c) => c ?? dev.data.config); setName((n) => n || dev.data.name); setGroup((g) => (g === '' && dev.data.group_id ? String(dev.data.group_id) : g)); setConn((c) => c || dev.data.connection_type || '')
   }, [id])
   useEffect(() => { load() }, [load])
+  useEffect(() => { api.get('/routes').then((r) => setRoutes(r.data)).catch(() => {}) }, [])
+  useEffect(() => { setNoShot(false) }, [d?.screenshot_at])
   useLive((e) => { if (e.event === 'device_update' && e.device.device_id === id) load() })
 
   const save = async () => {
@@ -36,6 +43,16 @@ export function DeviceDetailModal({ id, groups, onClose, onChanged }: { id: stri
     } catch (e) { setMsg(errMsg(e)) }
   }
   const act = async (fn: () => Promise<any>, ok: string) => { try { await fn(); setMsg(ok) } catch (e) { setMsg(errMsg(e)) } }
+
+  const showTrail = async () => {
+    try {
+      const [t, z] = await Promise.all([api.get<TrackPoint[]>(`/devices/${id}/track?hours=24`), api.get<Zone[]>('/zones')])
+      setTrail(t.data); setZones(z.data)
+    } catch (e) { setMsg(errMsg(e)) }
+  }
+  const setRoute = async (rid: string) => {
+    try { await api.put(`/devices/${id}`, rid ? { route_id: +rid } : { clear_route: true }); setMsg(rid ? 'Route assigned' : 'Route removed'); load(); onChanged() } catch (e) { setMsg(errMsg(e)) }
+  }
 
   if (!d || !cfg) return <Modal title="Device" onClose={onClose}><Empty>Loading…</Empty></Modal>
   return (
@@ -60,12 +77,20 @@ export function DeviceDetailModal({ id, groups, onClose, onChanged }: { id: stri
           <p>Reported playing: <b>{d.current_content || '—'}</b></p>
           <p>CPU {d.cpu ?? '—'}% · Mem {d.memory ?? '—'}% · {d.network || '—'} · v{d.software_version || '—'}</p>
           <p>System: <b>{d.os_name ? `${d.os_name} ${d.os_version ?? ''} (${d.os_arch ?? '?'})` : 'not reported'}</b>{d.runtime_version ? ` · Python ${d.runtime_version}` : ''}</p>
+          {d.route && (
+            <div className="my-1 rounded-2xl bg-white/60 p-2.5">
+              <div className="flex items-center justify-between text-xs"><b>{routes.find((r) => r.id === d.route!.route_id)?.name ?? 'Route'}</b>{d.route.off_route ? <Badge tone="red">off route · {d.route.offset_km} km</Badge> : <Badge tone="green">on route</Badge>}</div>
+              <div className="my-1.5 h-2 overflow-hidden rounded-full bg-brand-100/70"><div className="h-2 rounded-full bg-brand-500" style={{ width: `${d.route.progress ?? 0}%` }} /></div>
+              <p className="text-xs text-ink-500">{d.route.leg_label ?? '—'} · {d.route.progress ?? 0}% of the route</p>
+            </div>
+          )}
           <p>Identity: {d.protection === 'protected' ? <Badge tone="green">key bound {ago(d.key_bound_at)}</Badge> : <Badge tone="amber">no identity key (older agent)</Badge>}</p>
         </div>
         <div>
           <h4 className="mb-2 font-semibold">Remote configuration</h4>
           <Field label="Name"><input disabled={!admin} className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></Field>
           <Field label="Connection type"><select disabled={!admin} className={inputCls} value={conn} onChange={(e) => setConn(e.target.value as ConnectionType | '')}><option value="">Not set</option>{(Object.keys(CONNECTION_LABELS) as ConnectionType[]).map((c) => <option key={c} value={c}>{CONNECTION_LABELS[c]}</option>)}</select></Field>
+          {(routes.length > 0 || d.route_id) && <Field label="Route" hint="Content can be assigned to this route or to one of its legs"><select disabled={!admin} className={inputCls} value={d.route_id ?? ''} onChange={(e) => setRoute(e.target.value)}><option value="">— none —</option>{routes.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></Field>}
           <Field label="Group"><select disabled={!admin} className={inputCls} value={group} onChange={(e) => setGroup(e.target.value)}><option value="">— none —</option>{groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Heartbeat (s)"><input disabled={!admin} type="number" min={2} className={inputCls} value={cfg.heartbeat_interval} onChange={(e) => setCfg({ ...cfg, heartbeat_interval: +e.target.value })} /></Field>
@@ -83,6 +108,24 @@ export function DeviceDetailModal({ id, groups, onClose, onChanged }: { id: stri
           <Button variant="danger" className="ml-auto" onClick={async () => { if (confirm(`Remove ${id}?`)) { await api.delete(`/devices/${id}`); onChanged(); onClose() } }}>Remove device</Button>
         </div>
       )}
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <div>
+          <div className="mb-2 flex items-center justify-between"><h4 className="font-semibold">Screen right now</h4>
+            {admin && <Button variant="secondary" className="!px-3 !py-1 text-xs" onClick={() => act(() => api.post(`/devices/${id}/screenshot/request`), 'Asked the display for a fresh picture')}>Capture now</Button>}</div>
+          {d.screenshot_at && !noShot
+            ? <img alt={`Latest screenshot of ${d.device_id}`} className="w-full rounded-2xl ring-1 ring-ink-100" src={`/api/devices/${id}/screenshot?token=${getToken()}&t=${encodeURIComponent(d.screenshot_at)}`} onError={() => setNoShot(true)} />
+            : <div className="grid aspect-video place-items-center rounded-2xl bg-ink-100/60 p-3 text-center text-xs text-ink-500">No screenshot yet. It arrives within a minute while the display page is open{admin ? ', or press Capture now' : ''}.</div>}
+          {d.screenshot_at && <p className="mt-1 text-xs text-ink-400">Taken {ago(d.screenshot_at)}</p>}
+        </div>
+        <div>
+          <div className="mb-2 flex items-center justify-between"><h4 className="font-semibold">Where it has been (24 h)</h4>
+            <Button variant="secondary" className="!px-3 !py-1 text-xs" onClick={showTrail}>{trail ? 'Refresh trail' : 'Show trail'}</Button></div>
+          {trail
+            ? (trail.length > 1 ? <MapView zones={zones} routes={routes.filter((r) => r.id === d.route_id)} devices={[d]} trail={trail.map((p) => [p.lat, p.lng] as [number, number])} height={200} />
+              : <div className="grid aspect-video place-items-center rounded-2xl bg-ink-100/60 p-3 text-center text-xs text-ink-500">Not enough movement recorded yet.</div>)
+            : <div className="grid aspect-video place-items-center rounded-2xl bg-ink-100/60 p-3 text-center text-xs text-ink-500">Press Show trail to draw its route on the map.</div>}
+        </div>
+      </div>
       <h4 className="mb-2 mt-5 font-semibold">Recent activity</h4>
       <ul className="max-h-40 space-y-1 overflow-auto text-sm">
         {logs.map((l) => <li key={l.id}><span className="mr-2 text-xs text-ink-400">{ago(l.ts)}</span>{l.message}</li>)}

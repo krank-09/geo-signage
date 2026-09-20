@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, errMsg, isAdmin } from '../services/api'
-import type { Alert, LogEntry } from '../types'
+import type { Alert, LogEntry, ZoneVisit } from '../types'
 import { HealthBar } from '../components/HealthBar'
 import { useToast } from '../components/Toasts'
 import { useDevices } from '../hooks/useDevices'
@@ -26,6 +26,7 @@ export default function Monitoring() {
   const toast = useToast()
   const admin = isAdmin()
   const [stats, setStats] = useState<Analytics | null>(null)
+  const [visits, setVisits] = useState<ZoneVisit[]>([])
   const loadLogs = useCallback(() => api.get('/monitoring/logs?limit=40').then((r) => setLogs(r.data)), [])
   const loadAlerts = useCallback(() => api.get('/alerts?state=all&limit=25').then((r) => setAlerts(r.data)), [])
   useEffect(() => { loadAlerts() }, [loadAlerts])
@@ -34,7 +35,7 @@ export default function Monitoring() {
     setThErr('')
     try { await api.put('/settings/health', { threshold: draft }); setThreshold(draft); setDraft(null); toast('ok', `Alerts now fire below ${draft}% health`); loadAlerts() } catch (e) { setThErr(errMsg(e)) }
   }
-  const loadStats = useCallback(() => api.get('/monitoring/analytics').then((r) => setStats(r.data)), [])
+  const loadStats = useCallback(() => { api.get('/monitoring/analytics').then((r) => setStats(r.data)); api.get('/monitoring/zone-visits?hours=24').then((r) => setVisits(r.data)) }, [])
   useEffect(() => { loadLogs(); loadStats() }, [loadLogs, loadStats])
   useEffect(() => { const t = setInterval(loadStats, 20000); return () => clearInterval(t) }, [loadStats])
   const { devices: deviceList } = useDevices({ pollMs: 20000, onEvent: (e) => { if (e.event === 'device_update') loadLogs(); else if (e.event === 'alert' || e.event === 'alert_resolved' || e.event === 'alerts_changed') loadAlerts() } })
@@ -89,9 +90,9 @@ export default function Monitoring() {
               <Bar value={u.uptime_24h} max={100} tone={u.uptime_24h > 90 ? 'bg-emerald-500' : u.uptime_24h > 50 ? 'bg-amber-500' : 'bg-red-500'} /></li>
           ))}</ul>
         </Card>
-        <Card title="Zone visits">
-          <ul className="space-y-2 text-sm">{stats?.zone_visits.map((z) => <li key={z.event} className="flex justify-between"><span>{z.event}</span><b>{z.count}</b></li>)}
-            {!stats?.zone_visits.length && <li className="text-ink-400">No zone events yet</li>}</ul>
+        <Card title="Zone visits (24 h)">
+          <ul className="space-y-2 text-sm">{visits.map((z) => <li key={z.zone_id} className="flex justify-between"><span>{z.zone_name} <span className="text-xs text-ink-400">· {z.devices} display{z.devices === 1 ? '' : 's'}</span></span><b>{z.visits}</b></li>)}
+            {!visits.length && <li className="text-ink-400">No zone entries yet</li>}</ul>
         </Card>
       </div>
       <Card title="Event log">

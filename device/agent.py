@@ -33,9 +33,11 @@ from identity import Identity, code_hash, file_sha256, hw_fingerprint, system_in
 
 with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION"), encoding="utf-8") as _f:
     VERSION = _f.read().strip()
-CAPABILITIES = ["signed-requests", "signed-manifests", "media-hash", "state-mac", "tamper-report"]
+CAPABILITIES = ["signed-requests", "signed-manifests", "media-hash", "state-mac", "tamper-report", "screenshots"]
 CLOCK_ROLLBACK_SECONDS = 120
 VERIFY_EVERY = 60
+SHOT_EVERY = 60          # seconds between automatic screenshots
+SHOT_MAX_BYTES = 400 * 1024
 log = logging.getLogger("agent")
 
 
@@ -58,6 +60,9 @@ class DeviceAgent:
         self.boot_id = secrets.token_hex(8)
         self.control_token = os.getenv("CONTROL_TOKEN") or secrets.token_urlsafe(24)   # protects /api/control on this machine
         self.demo_controls = os.getenv("DEMO_CONTROLS", "").strip().lower() in ("1", "true", "yes", "on")
+        self.page_token = secrets.token_urlsafe(16)     # the display page proves it is ours when it hands over a screenshot
+        self.shot_wanted = False                        # an admin asked for one right now
+        self.last_shot = 0.0
         self.tamper_queue: list[dict] = []
         self._tamper_seen: dict[str, float] = {}
 
@@ -153,12 +158,14 @@ class DeviceAgent:
             raise Offline("simulated network outage")
         if not self.token and path != "/device/register":
             self.register()
-        body = b""
+        body, ctype = b"", kw.pop("content_type", "application/json")
         if "json" in kw:
             body = json.dumps(kw.pop("json")).encode()
             kw["data"] = body
+        elif isinstance(kw.get("data"), bytes):
+            body = kw["data"]
         try:
-            r = self.http.request(method, self.server + path, headers={**self._headers(method, path, body), "Content-Type": "application/json"},
+            r = self.http.request(method, self.server + path, headers={**self._headers(method, path, body), "Content-Type": ctype},
                                   timeout=6, **kw)
         except requests.RequestException as e:
             self.connected = False
@@ -374,8 +381,12 @@ class DeviceAgent:
                         continue
                     if not msg:
                         break
-                    if json.loads(msg).get("type") == "sync":
-                        self.sync_event.set()
+                    data = json.loads(msg)
+                    if data.get("type") == "sync":
+                        if data.get("reason") == "screenshot":
+                            self.shot_wanted = True
+                        else:
+                            self.sync_event.set()
                 ws.close()
             except Exception as e:
                 log.debug("ws error: %s", e)
@@ -405,6 +416,26 @@ class DeviceAgent:
             with self.lock:
                 del self.impressions[: len(batch)]
 
+    # ------------------------------------------------------------------ screenshots
+    def capture_due(self):
+        """The display page checks this every second; when true it draws its screen to a canvas and posts the JPEG back."""
+        return self.shot_wanted or time.time() - self.last_shot > SHOT_EVERY
+
+    def accept_screenshot(self, data: bytes) -> bool:
+        if not data.startswith(b"\xff\xd8\xff") or len(data) > SHOT_MAX_BYTES:
+            return False
+        self.last_shot, self.shot_wanted = time.time(), False
+        threading.Thread(target=self._upload_shot, args=(data,), daemon=True).start()
+        return True
+
+    def _upload_shot(self, data: bytes):
+        try:
+            r = self._request("POST", "/device/screenshot", data=data, content_type="image/jpeg")
+            if r.status_code not in (200, 429):
+                log.debug("screenshot upload refused: %s", r.status_code)
+        except Offline:
+            pass
+
     # ------------------------------------------------------------------ display + demo controls
     def display_state(self):
         with self.lock:
@@ -421,6 +452,7 @@ class DeviceAgent:
                 "last_sync": self.last_sync, "moving": getattr(self.gps, "moving", None),
                 "demo_controls": self.demo_controls, "control_token": self.control_token if self.demo_controls else None,
                 "tamper_pending": len(self.tamper_queue), "version": VERSION,
+                "capture": self.capture_due() and bool(self.token), "page_token": self.page_token,
             }
 
     def control(self, data):

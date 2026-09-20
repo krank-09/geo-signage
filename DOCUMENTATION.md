@@ -23,6 +23,7 @@ This is the only documentation file. Project context for coding assistants lives
   - [B7. Public demo over a tunnel](#b7-public-demo-over-a-tunnel)
   - [B8. Live broadcasts, health alerts, city zones, discovery and Firebase sign-in](#b8-live-broadcasts-health-alerts-city-zones-discovery-and-firebase-sign-in)
   - [B9. Clients, fleet inventory and tamper-proofing](#b9-clients-fleet-inventory-and-tamper-proofing)
+  - [B10. Routes, location history and remote screenshots](#b10-routes-location-history-and-remote-screenshots)
 - [Part C: Presenter laptop setup](#part-c-presenter-laptop-setup)
   - [C1. What you need](#c1-what-you-need)
   - [C2. Check your laptop](#c2-check-your-laptop)
@@ -334,6 +335,10 @@ Eight tables. Foreign keys are shown with arrows.
 | `content.sha256` | Hash of the stored file, signed into each playlist. |
 | `agent_releases` | Trusted builds of the agent (version + code hash). |
 | `tamper_events` | Hash-chained record of tamper detections, per client. |
+| `routes` | Ordered stops plus a corridor width. Displays follow one (`devices.route_id`); assignments can target a route and one leg (`assignments.route_id`, `route_leg`). |
+| `devices.route_leg`, `route_progress`, `route_offset_km`, `route_off` | Where the display is along its route, recomputed on every position update. |
+| `location_points` | Remembered positions (moved 50 m, or entered a zone) for trails and zone-visit counts. Pruned after 7 days. |
+| `devices.screenshot_key`, `screenshot_at` | The latest screenshot of the display's page. |
 
 Details of the client, fleet and tamper columns are in [B9](#b9-clients-fleet-inventory-and-tamper-proofing). Unclaimed display agents (see B8) are deliberately **not** in the database: they live in a small in-memory list that expires.
 
@@ -756,6 +761,33 @@ The goal is that a copied file, a stolen token, a modified cache or a cloned dis
 | Copy a display's `.env` to another laptop and start it | "Same credentials, different machine: refused, and it shows up here as a clone attempt." |
 | Edit a cached image, wait a minute | "The screen noticed the file no longer matches what the server signed, deleted it, fetched a good copy, and raised an alert. It never played the bad file." |
 | Security page, Verify record | "The log itself is chained. If someone edits history, this check fails and points at the first altered entry." |
+
+### B10. Routes, location history and remote screenshots
+
+Added after comparing the build with the original brief, which lists route-based targeting, a `locations` table and remote screenshots.
+
+#### Route-based targeting
+
+A **route** is an ordered list of stops (name + coordinates) with a **corridor** width in km. Stop *i* to stop *i+1* is **leg *i+1***. A display is attached to a route from its detail window (or `PUT /devices/{id}` with `route_id`).
+
+- On every position update the server projects the display onto the route (`services/geo.route_position`) and stores its **leg**, **percent of the route covered**, **distance from the path** and the next stop. The Routes page and the device window show this live.
+- **Content targeting.** An assignment can name a route and optionally one leg. It applies only to displays on that route (and on that leg). A route counts as one more targeting dimension in the ranking, so *emergency > priority > specificity* still holds, where specificity is now the number of targets set (zone, group, route). Example: Leg 1 (Chandigarh to Delhi) plays a highway ad, the whole route plays a brand ad, and a zone assignment with a higher priority still overrides both while the van is inside that zone.
+- **Off route.** Farther than the corridor from the path raises an `off_route` alert (bell and toast) and logs "Left route"; coming back resolves it and logs "Back on route". Health alerts and route alerts are independent.
+- Deleting a route frees its displays and deletes the assignments that pointed at it. Shortening a route below a leg that has an assignment is refused.
+- **Accuracy.** Legs are straight lines between stops (the simulator drives straight lines too) and distances use a flat local frame around the display, which is accurate to a few km even on 1000 km legs. Real roads are not followed, so use a corridor wide enough to cover the road's deviation from the line.
+
+#### Location history, trails and zone visits
+
+- The server keeps a display's positions in `location_points`. A point is stored when the display first reports, when it enters another zone, or when it has moved 50 m and 5 s since the last stored point. A parked display stores nothing. Points older than `TRACK_RETENTION_DAYS` (7) are pruned about once an hour.
+- The device window has **Show trail** (last 24 h on a map, with its route). `GET /devices/{id}/track` returns the points.
+- **Zone visits** (Monitoring): how many times displays *entered* each zone in 24 h and how many different displays did. This counts entries, not minutes spent inside.
+
+#### Remote screenshots
+
+- **How it works.** The display page draws what it is showing (the current image or video frame, an emergency border, the top broadcast, a status label) into a 640x360 canvas, encodes a JPEG and hands it to the local agent with a per-run page token. The agent uploads it as a signed request to `POST /device/screenshot`. The server keeps only the newest one per display (in the media storage) and tells dashboards.
+- **When.** Automatically every 60 seconds, and immediately when an admin presses **Capture now** (the server pushes a `screenshot` message over the display's WebSocket).
+- **Limits.** JPEG only, at most `SCREENSHOT_MAX_KB` (400), at most one every 3 s per display. Another client's screenshot answers 404. Deleting the display deletes its picture.
+- **What it is not.** It is a redraw of the display page's content, not a capture of the real screen pixels, so it needs the kiosk page to be open in a browser and will not show anything outside that page. It answers "what should be on screen and is the page alive", not "is the physical panel on".
 
 ---
 
@@ -1625,13 +1657,14 @@ Use these if you have time. Each one is independent.
 | Discovery | A real agent with no identity announced itself, was filtered by city, claimed from the UI, registered on its own, and kept its identity after a restart | Pass |
 | Firebase sign-in | The real Firebase SDK against the **Firebase Auth emulator**: email registration, verification, Google popup, allow-list, approval queue, viewer versus admin (HTTP 403), instant revocation. Plus backend tests with self-signed RS256 tokens (wrong signature, audience, issuer, expiry, unknown key) | Pass |
 | Schema upgrade | A database created by the previous version opened by the new code, on SQLite and PostgreSQL | Pass |
-| Test suite | 85 backend tests (the earlier 45 plus the client and tamper suites), linting, and two browser regressions (21 and 20 steps) | Pass |
+| Test suite | 94 backend tests (the earlier 45 plus the client, tamper and route suites), linting, and two browser regressions (21 and 20 steps) | Pass |
 | Code reorganisation | 21-step browser regression: every page, creating and deleting a device and a zone through the UI, an emergency alert reaching a live display and clearing again, the page transition; plus 14 backend tests and linting | Pass |
 | Tunnel script | Pinggy start, `url` and `stop` through the rewritten script with a health check through the tunnel; provider auto-selection; ngrok with a wrong token against the real ngrok container | Pass |
 | Multi-client isolation | 19 backend tests (access matrix across every resource, cross-references, per-client names, quota, suspension, enrollment keys, hub scoping); the upgrade of the previous version's database on SQLite and PostgreSQL; the dashboard as a platform admin and as a client admin in headless Chromium (switcher, nav, empty other client) | Pass |
 | Fleet inventory | Backend tests (policy, filters, version compare, old unsigned agent still works) and a real agent reporting macOS, arm64, Python and capabilities into the Fleet page | Pass |
 | Tamper-proofing | 20 backend tests (signature, wrong key, replay, tampered body, clock skew, clone attempt, downgrade, fingerprint, signed playlist, hash chain, code baseline and trusted builds); live agents: a modified cache file was removed, re-downloaded and flagged; a copied identity was refused; a stolen token without the key got 401; an edited `state.json` and a modified source file were both reported; the demo controls, Host check and loopback bind were probed with `curl`; the flag was cleared and the record verified from the dashboard | Pass |
-| Whole suite on PostgreSQL | `TEST_DATABASE_URL=postgresql+psycopg2://... pytest` (found and fixed a client delete that SQLite let through) | 85 pass |
+| Routes, history, screenshots | 9 backend tests (geometry, content following the leg, off-route alert raised and cleared, validation and ownership, history and zone visits, screenshot upload and limits, client isolation, route deletion). A live agent drove the seeded route with the display page open in headless Chromium: the real Delhi ad appeared as the screenshot, Capture now and the progress bar worked, a jump to Ahmedabad raised the off-route alert and jumping back cleared it. The Routes page, the leg picker in Schedules and the zone-visit card were checked in the browser | Pass |
+| Whole suite on PostgreSQL | `TEST_DATABASE_URL=postgresql+psycopg2://... pytest` (found and fixed a client delete that SQLite let through) | 94 pass |
 | Query cost | SQL statements per location update, before and after the refactor | 5 to 4 |
 
 #### Not tested (be careful)
@@ -1639,6 +1672,8 @@ Use these if you have time. Each one is independent.
 | Area | Status |
 |---|---|
 | **Tamper-proofing on real hardware** | Detections were exercised on one macOS machine. Windows and Linux hardware fingerprints, the Linux kiosk checklist and the systemd hardening were not run. TPM / Secure Boot / attestation are not implemented. A user with root on a display can read its key. |
+| **Screenshots of a real kiosk** | Tested with the display page in headless Chromium. Chrome/Edge kiosk mode and a physical panel were not tested, and screenshots redraw the page rather than capturing the real screen. |
+| **Routes on real roads** | Only straight lines between stops were tested, with simulated GPS. |
 | **Multi-laptop use** | The display kit and the tunnel were only verified **from one machine**. No second physical laptop was used. |
 | **Windows** (`start.bat`) | Written, never run. |
 | **Firebase against a real project** | Only the emulator and synthetic tokens were used. Fetching Google's real certificates, Google's real consent screen, real verification emails and the Authorized-domains setting were **not** exercised. Needs your Firebase project. |
@@ -1695,6 +1730,8 @@ Use these if you have time. Each one is independent.
 | `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`, `MINIO_SECURE` | `localhost:9000`, `minioadmin`, `minioadmin`, `signage-media`, `0` | Object storage. |
 | `ADMIN_TOKEN_MINUTES`, `DEVICE_TOKEN_DAYS` | `720`, `30` | Login token lifetimes. |
 | `DEFAULT_ADMIN_USER`, `DEFAULT_ADMIN_PASSWORD` | `admin`, `admin123` | Seeded account (Compose maps `ADMIN_PASSWORD` here). |
+| `TRACK_RETENTION_DAYS` | `7` | How long location history is kept. |
+| `SCREENSHOT_MAX_KB` | `400` | Largest screenshot a display may upload. |
 | `SEED_DEMO_DATA` | `1` | Seed devices, zones and slides on first start. |
 | `DEVICE_AUTH_MODE` | `optional` | `optional` accepts displays without an identity key (flagged "No key"); `required` refuses them. Displays with a bound key must always sign. |
 | `SERVER_SIGNING_KEY` | generated, stored in the database | Base64 32-byte Ed25519 seed used to sign playlists. Set it to keep the key across database resets. |
@@ -1728,6 +1765,8 @@ Through nginx everything is under `/api`.
 | Clients | `GET/POST /clients`, `PUT/DELETE /clients/{id}`, `POST /clients/{id}/rotate-key` (platform users manage; client users see their own). Send `X-Client-Id` to work inside one client |
 | Fleet | `GET /fleet/inventory`, `PUT /fleet/policy`, `GET/POST /fleet/releases`, `DELETE /fleet/releases/{id}` |
 | Security | `GET /security/events`, `GET /security/status`, `POST /security/audit/verify`, `POST /devices/{id}/tamper/clear` |
+| Routes | `GET/POST /routes`, `PUT/DELETE /routes/{id}`; assignments accept `route_id` and `route_leg`; `PUT /devices/{id}` accepts `route_id` / `clear_route` |
+| History and screenshots | `GET /devices/{id}/track?hours=`, `GET /monitoring/zone-visits?hours=`, `GET /devices/{id}/screenshot` (`?token=` allowed), `POST /devices/{id}/screenshot/request` |
 | Users | `GET/POST /users`, `POST /users/me/password`, `PUT /users/{id}/role`, `DELETE /users/{id}` |
 | Devices | `GET/POST /devices`, `GET/PUT/DELETE /devices/{device_id}`, `POST /devices/{id}/rotate-token`, `POST /devices/{id}/sync`, `GET /devices/{id}/logs` |
 | Groups | `GET/POST /groups`, `DELETE /groups/{id}` |
@@ -1740,7 +1779,7 @@ Through nginx everything is under `/api`.
 | Cities | `GET /cities?q=`, `GET /cities/{id}` (with polygon), `POST /cities/{id}/zone` |
 | Discovery | `POST /discovery/announce` (no login), `GET /discovery/agents?zone_id=&city_id=` |
 | Monitoring | `GET /monitoring/overview`, `/monitoring/logs`, `/monitoring/analytics`, `/monitoring/timeline` |
-| Device agent | (heartbeat and location replies also carry the broadcast version; `GET /device/{id}/content` includes `broadcasts`) `POST /device/register`, `/device/heartbeat`, `/device/location`, `/device/impressions`, `/device/tamper` (signed when the display has a key); `GET /device/{id}/configuration`, `/device/{id}/content`, `/device/{id}/media/{content_id}` |
+| Device agent | (heartbeat and location replies also carry the broadcast version; `GET /device/{id}/content` includes `broadcasts`) `POST /device/register`, `/device/heartbeat`, `/device/location`, `/device/impressions`, `/device/tamper`, `/device/screenshot` (JPEG body; signed when the display has a key); `GET /device/{id}/configuration`, `/device/{id}/content`, `/device/{id}/media/{content_id}` |
 | Realtime | `WS /ws/admin?token=`, `WS /ws/device/{id}?token=` |
 | Health | `GET /health`; interactive docs at `http://localhost:8000/docs` |
 
@@ -1795,8 +1834,8 @@ There are four kinds of people. The first two use the dashboard; the last two ar
 3. **Add a display** (Devices, *Add device*). Either pick a display that is already announcing itself nearby (it connects by itself), or create a Device ID and hand its one-time registration token to the operator.
 4. **Upload content** (Content): JPG, PNG, MP4 or WebM. The server checks the file's real type, stores it, and records its SHA-256 hash.
 5. **Create zones** (Zones & map): draw a polygon on the map, or pick a city and use its real boundary in one click.
-6. **Assign content** (Schedules): choose content, a zone and/or a device group, a priority, and an optional daily time window (may cross midnight). Anything not tied to a zone is the default.
-7. **Watch** (Overview, Monitoring): live map, online/offline, per-display **health bar**, what each display is playing now, uptime and play counts.
+6. **Assign content** (Schedules): choose content, a zone, a device group and/or a route or route leg, a priority, and an optional daily time window (may cross midnight). Anything not tied to a zone is the default.
+7. **Watch** (Overview, Monitoring): live map, online/offline, per-display **health bar**, what each display is playing now, uptime, play counts, zone visits, each display's **screenshot** (with Capture now) and its **trail**. Vehicles on a **Route** show their leg and progress, and an alert fires if they leave the path.
 8. **React**: send a **Broadcast** (ticker, banner or fullscreen message to a zone, group or one display, with optional expiry) or trigger an **Emergency** override that beats everything else.
 9. **Alerts**: a toast and the bell tell you when a display goes offline or its health drops below the threshold (default 50), and when it recovers.
 10. **Fleet**: see which OS and agent version every display runs and which are behind your minimum-version policy.
@@ -1837,7 +1876,7 @@ Each item: **what it does, how, and where the code is.**
 
 **Geofencing** (`services/geo.py`). A zone is a polygon of `[lat, lng]` points. The server uses **ray casting**: draw a ray from the point and count how many polygon edges it crosses; odd means inside. It is simple, needs no GIS database, and is fast enough for hundreds of zones (the limit we state). If several zones contain the point, the higher priority wins.
 
-**Content resolution** (`services/resolver.py`). Candidates are the assignments that match the display's zone or group and whose time window is active now. Ranking: **emergency > assignment priority > specificity** (zone plus group beats one of them beats the global default). Exact ties play together as a playlist. Priority beats specificity on purpose so an admin can always override with a number. Time windows use a fixed offset (IST by default) and may cross midnight.
+**Content resolution** (`services/resolver.py`). Candidates are the assignments that match the display's zone, group or route (and leg) and whose time window is active now. Ranking: **emergency > assignment priority > specificity** (zone plus group beats one of them beats the global default). Exact ties play together as a playlist. Priority beats specificity on purpose so an admin can always override with a number. Time windows use a fixed offset (IST by default) and may cross midnight.
 
 **The manifest hash.** The resolver output is boiled down to a short hash (content ids, versions, durations, plus the set of live broadcasts). Every location and heartbeat reply carries it. The display compares it to the last one and only refetches the playlist when it changed. This keeps traffic tiny and makes a missed push self-heal, because the next reply shows the difference.
 
@@ -1848,6 +1887,10 @@ Each item: **what it does, how, and where the code is.**
 **Health score and alerts** (`services/health.py`). Score 0-100 starts at 100 and loses points for high CPU, high memory, no GPS fix and a late heartbeat; an offline display is 0. Every 5 s the monitor raises an alert when a display drops below the threshold and resolves it a little above (hysteresis, so it does not flap). Alerts are in-dashboard only.
 
 **Broadcasts** (`services/broadcasts.py`). Text overlays targeted by zone, group or device with an optional expiry. They ride the same sync path: the manifest hash includes the set of live broadcasts, so starting, ending or expiring one is noticed on the next reply. The display page ignores the hash for restarting playback, so a broadcast does not restart the ads.
+
+**Routes** (`services/routes.py`, `services/geo.route_position`). Each position update is projected onto the route's straight legs to get the current leg, percent covered and distance from the path. A leg-specific assignment applies only while the display is on that leg, and a display farther than the corridor raises an `off_route` alert.
+
+**Location history and screenshots** (`services/tracking.py`, `api/tracking.py`). Positions are stored only when the display moved 50 m or entered a zone, so a parked screen costs nothing; they feed the trail and the zone-visit counts. The display page draws its current content into a canvas, the agent uploads the JPEG (signed), and the dashboard shows the newest one.
 
 **City zones** (`data/cities.json`). 46 cities: 25 with real OpenStreetMap boundaries and 21 approximated by a 15 km circle. One click creates a zone and re-locates displays.
 
@@ -1925,6 +1968,7 @@ scripts/             tunnel.sh (public URL), make-device-kit.sh (display zip + t
 | Backend tests | 85, all passing on SQLite and PostgreSQL |
 
 **Say plainly when asked.**
+- Routes are straight lines between stops, not real roads. Screenshots redraw the display page rather than grabbing real screen pixels.
 - Position comes from a simulated GPS on laptops; real GPS is supported through gpsd but was not tested on hardware.
 - Tamper-proofing detects and alerts; it does not stop someone with root on the display from reading its key. Hardware roots of trust (TPM, Secure Boot, attestation) are the next step and are not built.
 - Zone matching is Python ray casting, not PostGIS; fine for hundreds of zones, not millions.

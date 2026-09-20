@@ -52,6 +52,7 @@ class SimulatedGPS(GpsProvider):
                 for s in range(1, steps):
                     t = s / steps
                     self.path.append((lat + (nlat - lat) * t, lng + (nlng - lng) * t))
+        self.route_path = list(self.path)      # kept so a jump to an off-route place can be undone by jumping back
         self.i = 0
         self.loop = loop
         self.moving = len(self.path) > 1
@@ -72,6 +73,7 @@ class SimulatedGPS(GpsProvider):
         name = name.lower()
         with self.lock:
             if name in self.waypoint_index:
+                self.path = list(self.route_path)
                 self.i = self.waypoint_index[name]
             elif name in WAYPOINTS:
                 self.path = [WAYPOINTS[name]]

@@ -81,6 +81,38 @@ function impression(item, startedAt) {
   fetch('/api/impression', { method: 'POST', body: JSON.stringify({ content_id: item.content_id, duration: dur, started_at: new Date(startedAt).toISOString() }) }).catch(() => {});
 }
 
+// Draw what is on screen into a small JPEG and hand it to the agent, which uploads it for the dashboard.
+let capturing = false;
+async function capture() {
+  if (capturing || !state) return;
+  capturing = true;
+  try {
+    const W = 640, H = 360, c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    g.fillStyle = state.items.length ? '#000' : '#0f172a'; g.fillRect(0, 0, W, H);
+    const w = current && (current.videoWidth || current.naturalWidth), h = current && (current.videoHeight || current.naturalHeight);
+    if (state.items.length && w && h) {
+      const r = (state.config.fit === 'cover' ? Math.max : Math.min)(W / w, H / h);
+      g.drawImage(current, (W - w * r) / 2, (H - h * r) / 2, w * r, h * r);
+    } else {
+      g.fillStyle = '#fff'; g.font = 'bold 26px system-ui'; g.textAlign = 'center';
+      g.fillText(state.items.length ? 'Loading content' : state.device_id + ' - waiting for content', W / 2, H / 2);
+    }
+    if (state.emergency) { g.strokeStyle = '#ef4444'; g.lineWidth = 8; g.strokeRect(4, 4, W - 8, H - 8); }
+    const b = (state.broadcasts || [])[0];
+    if (b) {
+      g.fillStyle = { info: '#4338ca', warning: '#b45309', critical: '#b91c1c' }[b.severity] || '#4338ca';
+      g.fillRect(0, H - 40, W, 40);
+      g.fillStyle = '#fff'; g.font = 'bold 20px system-ui'; g.textAlign = 'left'; g.fillText(b.message.slice(0, 48), 12, H - 14);
+    }
+    g.fillStyle = 'rgba(15,23,42,.75)'; g.fillRect(8, 8, 190, 24);
+    g.fillStyle = '#fff'; g.font = '13px system-ui'; g.textAlign = 'left';
+    g.fillText((state.online ? 'ONLINE' : 'OFFLINE (cached)') + '  ' + state.device_id, 16, 25);
+    const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.6));
+    if (blob) await fetch('/api/screenshot', { method: 'POST', headers: { 'X-Page-Token': state.page_token || '' }, body: blob });
+  } catch (e) { /* a failed capture is simply retried on the next poll */ } finally { capturing = false; }
+}
+
 function clearPlayback() { clearTimeout(timer); timer = null; epoch++; }
 
 function playNext(myEpoch) {
@@ -155,6 +187,7 @@ async function poll() {
     state = await r.json();
   } catch (e) { return; } // local agent hiccup: keep whatever is playing
   render();
+  if (state.capture) capture();
   const sig = state.items.map(i => i.src).join(',') + '|' + state.config.fit + '|' + state.config.mute;
   if (sig !== signature) {
     signature = sig; idx = 0; clearPlayback();
