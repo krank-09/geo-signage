@@ -64,6 +64,8 @@ def user_from_token(token: str | None, db: Session) -> User:
     user = db.query(User).filter(User.username == payload.get("sub")).first()
     if not user:
         raise unauthorized
+    if user.role == "pending":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Your account is waiting for an administrator's approval")
     return user
 
 

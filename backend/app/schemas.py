@@ -6,9 +6,20 @@ from pydantic import BaseModel, Field, field_validator
 HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
+ConnectionType = Literal["wifi", "ethernet", "cellular_4g", "cellular_5g", "other"]
+
+
 class LoginIn(BaseModel):
     username: str
     password: str
+
+
+class FirebaseLoginIn(BaseModel):
+    id_token: str = Field(min_length=20, max_length=4096)
+
+
+class RoleIn(BaseModel):
+    role: Literal["admin", "viewer", "pending"]
 
 
 class UserIn(BaseModel):
@@ -22,10 +33,35 @@ class PasswordChangeIn(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class AnnounceIn(BaseModel):
+    secret: str = Field(min_length=16, max_length=64)   # random, generated and kept by the agent; only its hash is ever shown
+    name: str = Field(min_length=1, max_length=80)
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
+    connection_type: ConnectionType | None = None
+    software_version: str | None = Field(None, max_length=32)
+
+
+class HealthSettingIn(BaseModel):
+    threshold: int = Field(ge=0, le=100)
+
+
+class BroadcastIn(BaseModel):
+    message: str = Field(min_length=1, max_length=280)
+    style: Literal["ticker", "banner", "fullscreen"] = "ticker"
+    severity: Literal["info", "warning", "critical"] = "info"
+    zone_id: int | None = None
+    group_id: int | None = None
+    device_id: str | None = Field(None, max_length=64)
+    duration_seconds: int | None = Field(None, ge=5, le=86400)  # None = until an admin ends it
+
+
 class DeviceIn(BaseModel):
     device_id: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     name: str = Field(min_length=1, max_length=100)
     group_id: int | None = None
+    connection_type: ConnectionType | None = None
+    discovery_id: str | None = Field(None, max_length=32)  # claim an unclaimed agent found on the network (see discovery)
     latitude: float | None = Field(None, ge=-90, le=90)
     longitude: float | None = Field(None, ge=-180, le=180)
 
@@ -41,6 +77,7 @@ class DeviceUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
     group_id: int | None = None
     clear_group: bool = False
+    connection_type: ConnectionType | None = None
     config: DeviceConfig | None = None
 
 
@@ -96,6 +133,12 @@ class ZoneIn(BaseModel):
             if len(p) != 2 or not (-90 <= p[0] <= 90) or not (-180 <= p[1] <= 180):
                 raise ValueError("polygon points must be [lat, lng]")
         return v
+
+
+class CityZoneIn(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=100)   # default: "<City> Zone"
+    priority: int = 10
+    color: str = Field("#3b82f6", pattern=r"^#[0-9a-fA-F]{6}$")
 
 
 class AssignmentIn(BaseModel):

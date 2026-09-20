@@ -21,6 +21,7 @@ This is the only documentation file. Project context for coding assistants lives
   - [B5. Security](#b5-security)
   - [B6. Real-time flow](#b6-real-time-flow)
   - [B7. Public demo over a tunnel](#b7-public-demo-over-a-tunnel)
+  - [B8. Live broadcasts, health alerts, city zones, discovery and Firebase sign-in](#b8-live-broadcasts-health-alerts-city-zones-discovery-and-firebase-sign-in)
 - [Part C: Presenter laptop setup](#part-c-presenter-laptop-setup)
   - [C1. What you need](#c1-what-you-need)
   - [C2. Check your laptop](#c2-check-your-laptop)
@@ -54,6 +55,7 @@ This is the only documentation file. Project context for coding assistants lives
 - [Part E: Demo](#part-e-demo)
   - [E1. Slide-by-slide talking points](#e1-slide-by-slide-talking-points)
   - [E2. Demo script, minute by minute](#e2-demo-script-minute-by-minute)
+  - [E3. Extra demo moments (about 4 minutes)](#e3-extra-demo-moments-about-4-minutes)
 - [Part F: Questions and honesty](#part-f-questions-and-honesty)
   - [F1. Likely judge questions](#f1-likely-judge-questions)
   - [F2. What was tested and what was not](#f2-what-was-tested-and-what-was-not)
@@ -150,32 +152,38 @@ geo-signage/
 │   ├── app/
 │   │   ├── main.py         app wiring only: lifespan, CORS, routers, /health
 │   │   ├── config.py       every environment setting, in one place
-│   │   ├── models.py  schemas.py  database.py  security.py  realtime.py  storage.py  seed.py
+│   │   ├── models.py  schemas.py  database.py (incl. sync_schema)  security.py  realtime.py  storage.py  seed.py
 │   │   ├── api/            one router per area
-│   │   │   auth  users  devices  device_api (called by agents)  content  zones
-│   │   │   assignments (+ emergency)  monitoring  ws (WebSockets)  deps (shared 404 helpers)
-│   │   └── services/       geo (point in polygon)  resolver (what to play)  device_service
-│   │                       zone_service  media (upload checks + range streaming)  monitor (offline sweep)
-│   ├── tests/              pytest against a temporary SQLite database
+│   │   │   auth (incl. Firebase exchange)  users  devices  device_api (called by agents)  content  zones
+│   │   │   assignments (+ emergency)  broadcasts  alerts (+ health threshold)  cities  discovery
+│   │   │   monitoring  ws (WebSockets)  deps (shared 404 helpers)
+│   │   ├── services/       geo  resolver (what to play)  device_service  zone_service  health (score + alerts)
+│   │   │                   broadcasts  cities  discovery  firebase  settings  media  monitor (offline sweep + alerts)
+│   │   └── data/cities.json   predefined city boundaries (built by scripts/build_cities.py)
+│   ├── tests/              pytest against a temporary SQLite database (test_flow, test_new_features, test_firebase)
 │   ├── requirements.txt    runtime only        requirements-dev.txt  tests + ruff        pyproject.toml
 ├── frontend/               Vite + React + TypeScript + Tailwind v4
 │   └── src/
 │       ├── App.tsx  main.tsx  index.css (design tokens, motion)
-│       ├── services/api.ts   axios instance, auth helpers        types.ts   shared interfaces
-│       ├── hooks/            useLive (admin WebSocket)   useDevices (device list + live merge)
-│       ├── components/       ui  charts  Layout (nav + page transitions)  MapView  AssignmentForm
-│       │   ├── dashboard/    Kpi  DeviceDetailPanel
-│       │   └── devices/      TokenBox  AddDeviceModal  DeviceDetailModal
-│       └── pages/            one lazy-loaded page per route
+│       ├── services/       api.ts (axios, auth helpers)   firebase.ts (lazy-loaded Firebase SDK wrapper)
+│       ├── types.ts        shared interfaces
+│       ├── hooks/          useLive (admin WebSocket)  useDevices  useHealthThreshold
+│       ├── components/     ui  charts  Layout (nav + page transitions)  MapView  AssignmentForm  HealthBar  Toasts  AlertBell
+│       │   ├── dashboard/  Kpi  DeviceDetailPanel
+│       │   ├── devices/    TokenBox  AddDeviceModal (connection type + discovery)  DeviceDetailModal
+│       │   └── zones/      CityPicker
+│       └── pages/          one lazy-loaded page per route (incl. Broadcast)
 ├── device/                 the display agent (also what display laptops receive)
-│   ├── agent.py            DeviceAgent: register, heartbeat, location, sync, push, impressions
+│   ├── agent.py            DeviceAgent: register, heartbeat, location, sync, push, broadcasts, impressions
 │   ├── bootstrap.py        .env loading, server discovery, opening the browser
-│   ├── cache.py  display_server.py  gps.py  display/index.html
+│   ├── discovery.py        unclaimed-agent announcements and saved identity
+│   ├── cache.py  display_server.py  gps.py  display/index.html (playlist + broadcast overlays)
 │   └── start.sh  start.bat  Dockerfile  .env.example  requirements.txt
 ├── simulator/run_all.py    starts several agents with simulated GPS and a control prompt
 └── scripts/
     ├── tunnel.sh           public URL via ngrok, Cloudflare or Pinggy (start | url | which | stop)
-    └── make-device-kit.sh  builds dist/device-kit.zip (agent + GUIDE.md taken from Part D)
+    ├── make-device-kit.sh  builds dist/device-kit.zip (agent + GUIDE.md taken from Part D)
+    └── build_cities.py     rebuilds backend/app/data/cities.json from OpenStreetMap (rarely needed)
 ```
 
 ### A4. Tests and known limits
@@ -298,6 +306,23 @@ Eight tables. Foreign keys are shown with arrows.
 | The schema diagram | "Eight tables. The heart of it is one table, assignments. It says: this content, for this zone, for this group, in this time window, at this priority." |
 | Highlight the nullable columns on *assignments* | "Leave the zone empty and it applies everywhere. Leave the group empty and it applies to every device. Leave both empty and you have a default." |
 | Highlight *device_logs* | "We do not store uptime as a number. We log online and offline events and compute uptime from that history, so it is always explainable." |
+
+#### Added with the newer features
+
+| Table / column | Purpose |
+|---|---|
+| `devices.connection_type` | How the display connects: `wifi`, `ethernet`, `cellular_4g`, `cellular_5g`, `other`. Declared by the admin; not detected or verified. |
+| `broadcasts` | Live announcements: message, style (`ticker`/`banner`/`fullscreen`), severity, optional zone / group / device target, optional expiry, `ended_at`. |
+| `alerts` | A health alert per device while it stays below the threshold: `kind` (`offline`/`health_low`), health at the time, created / acknowledged / resolved times. |
+| `settings` | Key/value store for values admins change at runtime (currently the health alert threshold). |
+| `users.email`, `users.firebase_uid` | Link a person to their Firebase account. Firebase-only accounts have `password_hash = "!firebase"`, which never verifies. |
+| `users.role = pending` | A signed-in Firebase person who has not been approved yet. Has no access. |
+
+Unclaimed display agents (see B8) are deliberately **not** in the database: they live in a small in-memory list that expires.
+
+**Upgrading an old database.** There are no migrations, but `database.sync_schema()` runs at startup and adds any missing tables, columns and
+indexes (additive changes only). It was tested by opening databases created by the previous version, on both SQLite and PostgreSQL: existing data
+is kept and a second start changes nothing. Any non-additive model change still needs a reset.
 
 ### B3. How content gets chosen
 
@@ -459,6 +484,29 @@ token on the client.
 | The "public server" table | "Putting a demo on the internet changes the risk. We removed default passwords and default tokens from the public path and added a warning when the defaults are still in use." |
 | The weak-spots list | "Here is what we know is not production-grade: tokens in WebSocket URLs, per-user rate limiting, and open CORS." |
 
+#### Firebase sign-in (optional, alongside the built-in login)
+
+Set `FIREBASE_PROJECT_ID` (and the web config) to enable it. The login page then offers Google and email/password sign-in in addition to the local
+admin form. The browser signs in with Firebase, then sends the Firebase **ID token** to `POST /auth/firebase`, which returns our normal session token.
+Everything after that is unchanged, so device login is untouched.
+
+| Rule | Detail |
+|---|---|
+| Token checks | Signature (Google's published certificates, refetched once when the key id is unknown), audience = project ID, issuer = `https://securetoken.google.com/<project>`, not expired |
+| Email must be verified | Unverified emails are refused (the login page offers to resend the verification mail) |
+| Not everyone gets in | A verified email in `FIREBASE_ADMIN_EMAILS` becomes **admin** on first sign-in. Everyone else becomes **pending**: an admin approves them as viewer or admin on the Users page |
+| Immediate revocation | Setting someone back to `pending` locks out the session token they already hold, not just future sign-ins |
+| Same email, new Firebase account | Re-linked to the existing person (verified email = ownership) instead of creating a duplicate |
+| Local login still works | Firebase-only accounts cannot use password login; the local admin form remains as a fallback |
+
+The Firebase **web config is public by design** (the browser needs it). Nothing secret is needed on the server: tokens are verified with Google's public certificates.
+You must enable the Google and Email/Password providers and add your site's domain (for example the tunnel host) under Authorized domains in the Firebase console.
+
+#### Discovery endpoint (unauthenticated on purpose)
+
+`POST /discovery/announce` has no login because the agents calling it have no identity yet. It is bounded and low value: at most 100 entries, each expiring after 45 s,
+exposing only a hostname, rough location and a hash of a secret. A claim delivers credentials only to the caller that presents the matching secret.
+
 ### B6. Real-time flow
 
 Two separate WebSocket channels: one to **dashboards**, one to **displays**.
@@ -498,6 +546,18 @@ The server sends one message type, `{"type":"sync","reason":…}`. The agent rea
 |---|---|
 | The two-channel table | "Two channels. The dashboard listens to what devices do. The displays listen for one word: sync." |
 | The timing table | "An emergency alert reaches the screens almost instantly. A boundary crossing takes about three seconds. An outage takes half a minute to show up on the dashboard, because we wait for missed heartbeats before crying wolf." |
+
+#### Events added by the newer features
+
+| To | Message | Sent when |
+|---|---|---|
+| Dashboards | `alert`, `alert_resolved` | A device drops below the health threshold / recovers (the monitor checks every 5 s) |
+| Dashboards | `alerts_changed` | An alert is acknowledged |
+| Dashboards | `broadcasts_changed` | A broadcast starts or ends |
+| Displays | `sync` (reason `broadcast`) | A broadcast starts or ends; the agent refetches and the overlay appears within about a second |
+
+Broadcasts also change the `manifest_version` the server returns on every heartbeat and location reply, so an agent notices a start, end **or expiry** by itself within one
+location tick (3 s) even if the push was lost.
 
 ### B7. Public demo over a tunnel
 
@@ -541,6 +601,72 @@ blocked for QUIC and TCP.
 | The tunnel diagram | "The displays only dial out, so the only thing that has to be reachable is the server. A tunnel gives it a public HTTPS address." |
 | The tunnel comparison table, highlighting the last row | "We found out the hard way that many networks block Cloudflare's tunnel port. So the script checks what the network allows: ngrok if configured, otherwise Cloudflare, otherwise a tunnel that only needs port 443." |
 | The setup summary | "Each display laptop needs Python, a zip file and three values: the server address, its own ID and its token." |
+
+### B8. Live broadcasts, health alerts, city zones, discovery and Firebase sign-in
+
+#### Live broadcasts (Broadcast page)
+
+An admin types a message (up to 280 characters), chooses how it appears and who sees it, and it is on the displays within about a second.
+It **overlays** what is playing and never restarts the playlist. This is text announcements only: live camera or screen video streaming is not built.
+
+| Choice | Options |
+|---|---|
+| Style | **Ticker** (scrolls along the bottom), **Banner** (a bar at the top), **Fullscreen** (replaces the screen) |
+| Importance | `info`, `warning`, `critical` (colour). If two banners overlap, the more important one shows; tickers are joined into one line |
+| Audience | Everyone, a zone, a device group, or one display (all set targets must match) |
+| Duration | Until ended, or 30 s / 1 min / 5 min / 15 min / 1 hour. Timed broadcasts end by themselves |
+
+A broadcast is not the emergency override: the override *replaces the content*, a broadcast is a message *on top of* the content.
+
+#### Health score and alerts
+
+Every device has a **health** value from 0 to 100, shown as a bar on Overview, Devices, the device panel, Monitoring and in the bell.
+
+| Factor | Effect on the score |
+|---|---|
+| Offline | Score is 0 |
+| CPU above 60% | Up to −30 (linear to 100%) |
+| Memory above 70% | Up to −30 (linear to 100%) |
+| No GPS fix | −10 |
+| Heartbeat running late (older than two intervals) | Up to −20, growing until the device counts as offline |
+
+When a device that has connected before falls **below the threshold** (default 50%, changed live on Monitoring with the slider), an alert is raised: a red toast, a
+badge on the bell, a row on Monitoring and a `DeviceLog` entry. It clears when health is 5 points above the threshold (so it does not flap). Admins can acknowledge alerts.
+Devices that have never connected are skipped. **Alerts are in-dashboard only**; email and push notifications are not built.
+
+#### City zones (Zones & map)
+
+Instead of drawing a boundary, pick a city: the boundary is outlined on the map and one click creates the zone.
+
+| Fact | Detail |
+|---|---|
+| Data | `backend/app/data/cities.json`: 46 major Indian cities, built by `scripts/build_cities.py` |
+| Boundaries | **25 have real boundaries from OpenStreetMap** (© OpenStreetMap contributors, ODbL). The other **21 are approximate 15 km circles**, because no reliable city-sized boundary was available; the list marks each as `boundary` or `circle · approx` |
+| Sanity rule | A boundary is accepted only if its area is plausible for a city (20 to 1,600 km²), so district or state polygons are rejected |
+| Behaviour | The new zone gets the name `<City> Zone`, a priority and colour you choose, and every device is re-located immediately |
+
+#### Adding a device: connection type and discovery
+
+The Add device form asks for a **connection type** and lists **displays that are ready to connect** in the chosen zone or city.
+
+1. A display laptop is started without a Device ID (`./start.sh`, press Enter at the Device ID question). It announces itself every 4 s with its name, location and a short code.
+2. In **Devices > Add device** the admin picks an area ("Look for displays in") and sees the unclaimed displays there, refreshed every 4 s.
+3. The admin selects one, fills in the device ID and name, and clicks **Create and connect**.
+4. The server creates the device and hands its credentials to that display on its next announcement. The display registers itself; no token is typed anywhere.
+   The modal shows when it comes online. The identity is saved, so later starts need no discovery.
+
+If nothing is announcing, the form falls back to the usual registration token. Unclaimed displays are kept only in memory and disappear 45 s after they stop announcing.
+
+#### Side by side
+
+| On screen | Say |
+|---|---|
+| Broadcast page: compose, preview, "On air now" | "Type a message, choose ticker, banner or fullscreen, choose who sees it. It appears on the screens within a second and disappears on its own. It sits on top of the ads, it does not interrupt them." |
+| A device's health bar and the bell | "Every screen has a health score from its CPU, memory, GPS and heartbeat. Drop below the threshold and you get a toast and a bell alert, without opening any page." |
+| Zones page, city picker with the outline | "No more drawing. Pick Kochi, see its real boundary on the map, one click makes the zone." |
+| Add device, list of displays found in Delhi | "A display that is switched on announces itself. You see it here, pick it, and it connects by itself. Nobody types a token." |
+| Login page with Google | "Sign in with Google or email through Firebase. New people wait for approval, so having a Google account is not enough." |
+
 
 ---
 
@@ -662,6 +788,8 @@ What each setting does:
 | `MAX_UPLOAD_MB=90` | Largest file you can upload. Kept under the tunnel's 100 MB request limit. |
 | `OFFLINE_THRESHOLD_SECONDS=45` | How long without a heartbeat before a device shows Offline. 45 s avoids false alarms from brief tunnel hiccups. |
 | `FRONTEND_PORT`, `BACKEND_PORT` | Host ports. Change them here if 3000 or 8000 is taken. |
+| `HEALTH_ALERT_THRESHOLD` | Default alert level in percent (50). Admins change it live on the Monitoring page. |
+| `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_APP_ID`, `FIREBASE_ADMIN_EMAILS` | Optional. Turn on Firebase sign-in (see [B5](#b5-security)). Leave empty to use only the built-in login. |
 | `NGROK_AUTHTOKEN`, `NGROK_DOMAIN` | Optional. Only for the ngrok tunnel (see [C10](#c10-open-the-public-tunnel)). Leave them out of the file if you do not use ngrok. |
 
 > **Password rules for `.env`:** avoid `$`, `#`, quotes and spaces in `ADMIN_PASSWORD`. Docker Compose treats them specially.
@@ -902,6 +1030,8 @@ You need Python 3.10+ and internet. Leave the window open once it is running.
 ```
 
 Do not reuse one Device ID on two laptops. Send the token privately (not in a public chat).
+
+**Alternative: no token to send (discovery).** Give the laptop only the kit and the **Server URL**. It presses Enter at the Device ID question, and then appears in **Devices > Add device** under "Available to connect" (pick the zone or city it is in). Select it, enter a Device ID and name, click **Create and connect**, and it registers by itself. Use the display's short code (shown in its window and in the list) to tell similar laptops apart.
 
 | Laptop | Device ID | Moves? | Place | Token | Sent? |
 |---|---|---|---|---|---|
@@ -1150,12 +1280,14 @@ If it prints `Python 3.10` or higher, go to Step 2. Otherwise:
 
 ```
 Server URL (e.g. https://name.trycloudflare.com/api):   <paste the Server URL>
-Device ID (e.g. DEV-001):                                <your Device ID>
-Registration token (e.g. A1B2-C3D4-E5F6):                <your token>
+Device ID (e.g. DEV-001, or Enter to be found automatically):   <your Device ID, or just press Enter>
+Registration token (asked only if you typed a Device ID):       <your token>
 
 Should this display MOVE along a route? [y/N]:           <n for most laptops, y only for the van>
 Which place is it in? (chandigarh, delhi, ...) [delhi]:  <only asked if you answered n>
 ```
+
+**No Device ID?** Press Enter. The window then says it is waiting to be claimed and shows a short code. The presenter picks your display in the dashboard (Devices > Add device) and it connects on its own within a few seconds; after that it remembers who it is.
 
 Laptops have no GPS, so the position is simulated. **Most displays should stay in one place**: press Enter (or `n`) and type the place the
 presenter gave you. Answer `y` only if the presenter says this laptop is the moving one.
@@ -1330,6 +1462,19 @@ A compact deck plan. **Left = what is on the slide. Right = what to say.** Rough
 | The tunnel URL stopped working | Free Pinggy tunnels last 60 minutes. Run `./scripts/tunnel.sh url`. If it changed, each laptop needs `./start.sh --reset`. **Start the tunnel just before presenting to avoid this.** |
 | Every display went offline at once | The internet or the tunnel dropped. Displays keep playing, which is itself a demonstration of the offline design. |
 
+### E3. Extra demo moments (about 4 minutes)
+
+Use these if you have time. Each one is independent.
+
+| Time | Do | Expect | Say |
+|---|---|---|---|
+| **+0:00** | **Broadcast**: type "Flash sale in Delhi: 30% off until 6 pm", style *Ticker*, audience *A zone: Delhi Zone*, lasts *1 minute*, **Go live**. | The Delhi display shows a scrolling ticker within a second; the Mumbai display does not. The playlist keeps playing underneath. It disappears after a minute. | "A message on top of the ads, only for Delhi, and it ends by itself." |
+| **+1:00** | **Zones & map > Add a city**: search "Kochi", click it. | The real boundary of Kochi is outlined and the map zooms to it. **Create zone** makes "Kochi Zone" instantly. | "No drawing: pick a city, get its zone." |
+| **+2:00** | **Devices > Add device**: choose *Delhi* under "Look for displays in". | An unclaimed display laptop (started with Enter at the Device ID question) is listed. Select it, set *Connection type*, **Create and connect**. It shows "is connected" within seconds. | "It announced itself, we picked it, it connected. No token typed." |
+| **+3:00** | **Monitoring > Health alerts**: drag the slider up to 95% and **Save threshold**. | Any device below 95% raises an alert immediately: red toasts, a badge on the bell. Open the bell, read the reasons, **Acknowledge**. Drag the slider back to 50% afterwards. | "Health is watched for us. Below the threshold we are told, without opening any page." |
+
+**Firebase sign-in** is shown by signing out and back in with Google or email. Do this only if the Firebase project is set up and the tunnel's domain is on its authorised list.
+
 ---
 
 ## Part F: Questions and honesty
@@ -1350,6 +1495,11 @@ A compact deck plan. **Left = what is on the slide. Right = what to say.** Rough
 | **Why a tunnel and not a cloud deploy?** | Speed and cost for a demo: no accounts, no infrastructure. A production deploy would be a small VM or a container service with a real domain and TLS. |
 | **Why three tunnel options?** | Cloudflare needs outbound port 7844 and our network blocks it. Pinggy needs only 443 but its free URL changes hourly. ngrok gives a fixed URL with a free account. The script picks: ngrok if configured, otherwise whichever the network allows. |
 | **How do you handle schema changes?** | We don't yet. Tables are created at startup with no migrations, so a model change means resetting the database. A production version would use Alembic. |
+| **Is "live broadcasting" video?** | No. It is live **announcements** (ticker, banner, fullscreen) pushed to displays within about a second. Streaming a camera or screen (WebRTC) is not built; it would need a relay server (TURN/media) to work across networks, and is the natural next step. |
+| **How is device health calculated?** | 100 minus penalties: CPU over 60%, memory over 70%, no GPS fix and late heartbeats; offline is 0. Alerts fire below an admin-set threshold (default 50%) and clear 5 points above it. The weights are our own choice and are not tuned on real fleet data. |
+| **Can anyone with a Google account get in?** | No. Firebase proves who someone is; **our** database decides what they can do. New people are `pending` until an admin approves them, unless their verified email is on the admin allow-list. Removing access works immediately, even for a live session. |
+| **How can a new display be found safely?** | Unclaimed displays announce themselves to an unauthenticated endpoint that is capped and short-lived, and expose only a name, rough location and a hash. Credentials go only to the display that holds the matching secret, and only after an admin claims it. |
+| **Are the city boundaries real?** | 25 of 46 are real OpenStreetMap boundaries; the other 21 are approximate 15 km circles and are labelled as such. The builder rejects district-sized matches, so a few big cities fall back to circles. |
 | **What would you do next?** | (1) PostGIS and a resolved-content cache; (2) boundary hysteresis; (3) single-use, expiring registration tokens and key rotation; (4) migrations; (5) a real GPS and a Raspberry Pi test; (6) remote screenshots and OTA agent updates from the original plan; (7) playlist transitions and per-item scheduling. |
 | **Which planned features did you skip?** | MQTT, remote screenshots, OTA updates, route-based targeting, and PostGIS. Everything in the original "must have" list and most of "should have" is built. |
 
@@ -1378,6 +1528,13 @@ A compact deck plan. **Left = what is on the slide. Right = what to say.** Rough
 | Public tunnel (Pinggy) | Isolated Docker project, real tunnel | Dashboard loaded over HTTPS with a working secure WebSocket; agent registered with a **random** token through the tunnel; old default password rejected |
 | Display kit | Zip built, unzipped in a clean folder, `start.sh` run with prompts answered | First-run prompts, `.env`, private virtual environment, dependency install, registration, live WebSocket |
 | Wrong-token feedback | Agent started with a bad token | A clear warning is shown |
+| Live broadcasts | Real agents and display pages in a headless browser: ticker, banner, fullscreen; zone and device targeting; timed expiry; ending; playlist not restarted | Pass |
+| Health and alerts | Score arithmetic, alert raise / recover / no duplicates, live threshold change, and a real overheating device raising a toast and bell alert then recovering | Pass |
+| City zones | List, search, create-from-city, duplicates rejected, devices re-located; through the UI with the outline on the map | Pass |
+| Discovery | A real agent with no identity announced itself, was filtered by city, claimed from the UI, registered on its own, and kept its identity after a restart | Pass |
+| Firebase sign-in | The real Firebase SDK against the **Firebase Auth emulator**: email registration, verification, Google popup, allow-list, approval queue, viewer versus admin (HTTP 403), instant revocation. Plus backend tests with self-signed RS256 tokens (wrong signature, audience, issuer, expiry, unknown key) | Pass |
+| Schema upgrade | A database created by the previous version opened by the new code, on SQLite and PostgreSQL | Pass |
+| Test suite | 45 backend tests, linting, and two browser regressions (21 and 20 steps) | Pass |
 | Code reorganisation | 21-step browser regression: every page, creating and deleting a device and a zone through the UI, an emergency alert reaching a live display and clearing again, the page transition; plus 14 backend tests and linting | Pass |
 | Tunnel script | Pinggy start, `url` and `stop` through the rewritten script with a health check through the tunnel; provider auto-selection; ngrok with a wrong token against the real ngrok container | Pass |
 | Query cost | SQL statements per location update, before and after the refactor | 5 to 4 |
@@ -1388,6 +1545,10 @@ A compact deck plan. **Left = what is on the slide. Right = what to say.** Rough
 |---|---|
 | **Multi-laptop use** | The display kit and the tunnel were only verified **from one machine**. No second physical laptop was used. |
 | **Windows** (`start.bat`) | Written, never run. |
+| **Firebase against a real project** | Only the emulator and synthetic tokens were used. Fetching Google's real certificates, Google's real consent screen, real verification emails and the Authorized-domains setting were **not** exercised. Needs your Firebase project. |
+| **Discovery across networks** | Tested on one machine. Behaviour through a tunnel from a separate laptop was not tested. |
+| **Health thresholds on real hardware** | The weights and the 60% / 70% limits were not tuned against real fleets. |
+| **Email / push alerts, live video streaming** | Not built. |
 | **ngrok success path** | Never connected: it needs an ngrok account. Only the missing-token and wrong-token errors ran. |
 | **Cloudflare tunnel connecting** | Never connected: blocked on the network we used. Only the fallback path was proven. |
 | **Pinggy after 60 minutes** | The expiry and URL change were not waited out. |
@@ -1423,6 +1584,10 @@ A compact deck plan. **Left = what is on the slide. Right = what to say.** Rough
 | `OFFLINE_THRESHOLD_SECONDS` | `30` | Silence before a device is marked offline. |
 | `FRONTEND_PORT`, `BACKEND_PORT` | `3000`, `8000` | Host ports. |
 | `NGROK_AUTHTOKEN`, `NGROK_DOMAIN` | empty | ngrok tunnel (optional). |
+| `HEALTH_ALERT_THRESHOLD` | `50` | Default health alert level (percent); admins change it live. |
+| `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_APP_ID` | empty | Firebase web config. An empty project ID disables Firebase sign-in. |
+| `FIREBASE_ADMIN_EMAILS` | empty | Comma-separated emails that become admins on their first verified sign-in. |
+| `FIREBASE_AUTH_EMULATOR_HOST` | empty | Development only: accept the emulator's unsigned tokens (for example `127.0.0.1:9099`). Never set in production. |
 
 **Backend (`backend/app/config.py`)**
 
@@ -1458,16 +1623,20 @@ Through nginx everything is under `/api`.
 
 | Area | Endpoints |
 |---|---|
-| Auth | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` |
-| Users | `GET/POST /users`, `POST /users/me/password`, `DELETE /users/{id}` |
+| Auth | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `GET /auth/config` (public), `POST /auth/firebase` |
+| Users | `GET/POST /users`, `POST /users/me/password`, `PUT /users/{id}/role`, `DELETE /users/{id}` |
 | Devices | `GET/POST /devices`, `GET/PUT/DELETE /devices/{device_id}`, `POST /devices/{id}/rotate-token`, `POST /devices/{id}/sync`, `GET /devices/{id}/logs` |
 | Groups | `GET/POST /groups`, `DELETE /groups/{id}` |
 | Content | `GET /content`, `POST /content/upload`, `PUT /content/{id}`, `POST /content/{id}/replace`, `DELETE /content/{id}`, `GET /content/{id}/file` (`?token=` allowed for media tags) |
 | Zones | `GET/POST /zones`, `PUT/DELETE /zones/{id}` |
 | Assignments | `GET/POST /assignments`, `PUT/DELETE /assignments/{id}`, `POST /zones/{id}/content`, `DELETE /zones/{id}/content/{content_id}` |
 | Emergency | `GET/POST/DELETE /emergency` |
+| Broadcasts | `GET /broadcasts`, `POST /broadcasts`, `DELETE /broadcasts/{id}`, `DELETE /broadcasts` (end all) |
+| Alerts and health | `GET /alerts?state=open\|all`, `POST /alerts/{id}/ack`, `GET/PUT /settings/health` |
+| Cities | `GET /cities?q=`, `GET /cities/{id}` (with polygon), `POST /cities/{id}/zone` |
+| Discovery | `POST /discovery/announce` (no login), `GET /discovery/agents?zone_id=&city_id=` |
 | Monitoring | `GET /monitoring/overview`, `/monitoring/logs`, `/monitoring/analytics`, `/monitoring/timeline` |
-| Device agent | `POST /device/register`, `/device/heartbeat`, `/device/location`, `/device/impressions`; `GET /device/{id}/configuration`, `/device/{id}/content`, `/device/{id}/media/{content_id}` |
+| Device agent | (heartbeat and location replies also carry the broadcast version; `GET /device/{id}/content` includes `broadcasts`) `POST /device/register`, `/device/heartbeat`, `/device/location`, `/device/impressions`; `GET /device/{id}/configuration`, `/device/{id}/content`, `/device/{id}/media/{content_id}` |
 | Realtime | `WS /ws/admin?token=`, `WS /ws/device/{id}?token=` |
 | Health | `GET /health`; interactive docs at `http://localhost:8000/docs` |
 

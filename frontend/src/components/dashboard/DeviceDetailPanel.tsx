@@ -6,6 +6,7 @@ import { ArrowsClockwise, ArrowUpRight, Cpu, MapPin, MapTrifold, Memory, PlayCir
 import { api, errMsg, isAdmin } from '../../services/api'
 import type { Device } from '../../types'
 import { CountUp } from '../charts'
+import { healthTone } from '../HealthBar'
 import { ago, Button } from '../ui'
 
 function Tile({ label, icon, children }: { label: string; icon?: ReactNode; children: ReactNode }) {
@@ -27,7 +28,9 @@ function Meter({ label, icon, value, unit = '%' }: { label: string; icon: ReactN
   )
 }
 
-export function DeviceDetailPanel({ d }: { d: Device }) {
+const TONE_BG = { red: 'bg-red-400', amber: 'bg-amber-300', green: 'bg-emerald-300' }
+
+export function DeviceDetailPanel({ d, threshold }: { d: Device; threshold: number }) {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const admin = isAdmin()
@@ -58,6 +61,18 @@ export function DeviceDetailPanel({ d }: { d: Device }) {
           <div className="flex items-center gap-1.5 text-xs font-medium text-white/65"><WifiHigh size={14} weight="bold" />Link</div>
           <div className="mt-1.5 text-lg font-bold">{d.ws_connected ? 'Live push' : d.status === 'online' ? 'Polling' : 'Disconnected'}</div>
           <div className="text-xs text-white/60">{d.network || 'network unknown'}</div>
+        </div>
+      </div>
+      <div className="relative mt-3 rounded-[20px] border border-white/15 bg-white/12 p-4 backdrop-blur-md">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-white/65">
+          <span>Health · alert below {threshold}%</span><span>{d.health_reasons.length ? d.health_reasons.join(' · ') : 'All checks passing'}</span>
+        </div>
+        <div className="mt-2 flex items-center gap-3" role="meter" aria-label="Device health" aria-valuemin={0} aria-valuemax={100} aria-valuenow={d.health}>
+          <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-white/15">
+            <motion.div className={`h-full origin-left rounded-full ${TONE_BG[healthTone(d.health, threshold)]}`} initial={{ scaleX: 0 }} animate={{ scaleX: d.health / 100 }} transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }} />
+            <span className="absolute inset-y-0 w-px bg-white/50" style={{ left: `${threshold}%` }} aria-hidden="true" />
+          </div>
+          <span className="w-12 text-right text-xl font-extrabold tabular-nums">{d.health}%</span>
         </div>
       </div>
       <div className="relative mt-auto flex flex-wrap items-center gap-x-6 gap-y-3 rounded-[20px] bg-ink-900/25 px-5 py-4 pt-4" style={{ marginTop: 20 }}>

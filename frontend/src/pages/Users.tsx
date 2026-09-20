@@ -1,8 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { api, errMsg, isAdmin } from '../services/api'
+import type { AppUser } from '../types'
 import { Avatar, Badge, Button, Card, ErrorNote, Field, inputCls, PageHeader } from '../components/ui'
-
-interface U { id: number; username: string; role: string; created_at: string }
 
 function ChangePassword() {
   const [f, setF] = useState({ current_password: '', new_password: '', confirm: '' })
@@ -31,11 +30,16 @@ function ChangePassword() {
 }
 
 export default function Users() {
-  const [users, setUsers] = useState<U[]>([])
+  const [users, setUsers] = useState<AppUser[]>([])
   const [f, setF] = useState({ username: '', password: '', role: 'admin' })
   const [err, setErr] = useState('')
   const admin = isAdmin()
+  const me = localStorage.getItem('username')
   const load = useCallback(() => { if (admin) api.get('/users').then((r) => setUsers(r.data)) }, [admin])
+  const pending = users.filter((u) => u.role === 'pending')
+  const people = users.filter((u) => u.role !== 'pending')
+  const setRole = async (u: AppUser, role: AppUser['role']) => { try { await api.put(`/users/${u.id}/role`, { role }); load() } catch (e) { setErr(errMsg(e)) } }
+  const remove = async (u: AppUser) => { if (confirm(`Remove ${u.username}?`)) { try { await api.delete(`/users/${u.id}`); load() } catch (e) { setErr(errMsg(e)) } } }
   useEffect(() => { load() }, [load])
 
   const add = async (e: FormEvent) => {
@@ -61,10 +65,35 @@ export default function Users() {
           <div className="mb-3"><Button>Add</Button></div>
         </form>
       </Card>
-      <Card>
-        <ul className="divide-y divide-ink-100/70 text-sm">{users.map((u) => (
-          <li key={u.id} className="flex items-center gap-3 py-2.5"><Avatar label={u.username} text={u.username.slice(0, 2).toUpperCase()} size={36} /><b>{u.username}</b><Badge tone={u.role === 'admin' ? 'blue' : 'gray'}>{u.role}</Badge>
-            <Button variant="ghost" className="ml-auto !text-red-600" onClick={async () => { if (confirm(`Delete ${u.username}?`)) { try { await api.delete(`/users/${u.id}`); load() } catch (e) { setErr(errMsg(e)) } } }}>Delete</Button></li>
+      {pending.length > 0 && (
+        <Card title={`Waiting for approval (${pending.length})`} className="ring-2 ring-amber-300/60">
+          <p className="mb-3 text-sm text-ink-500">These people signed in with Firebase but have no access yet. Give each a role, or remove them.</p>
+          <ul className="divide-y divide-ink-100/70 text-sm">
+            {pending.map((u) => (
+              <li key={u.id} className="flex flex-wrap items-center gap-3 py-2.5">
+                <Avatar label={u.username} text={u.username.slice(0, 2).toUpperCase()} size={36} />
+                <div className="min-w-0 flex-1"><b>{u.username}</b><div className="truncate text-xs text-ink-500">{u.email}</div></div>
+                <Button className="!px-3 !py-1 text-xs" onClick={() => setRole(u, 'viewer')}>Approve as viewer</Button>
+                <Button variant="secondary" className="!px-3 !py-1 text-xs" onClick={() => setRole(u, 'admin')}>Approve as admin</Button>
+                <Button variant="ghost" className="!px-3 !py-1 text-xs !text-red-600" onClick={() => remove(u)}>Remove</Button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+      <Card title="People">
+        <ul className="divide-y divide-ink-100/70 text-sm">{people.map((u) => (
+          <li key={u.id} className="flex flex-wrap items-center gap-3 py-2.5">
+            <Avatar label={u.username} text={u.username.slice(0, 2).toUpperCase()} size={36} />
+            <div className="min-w-0 flex-1"><b>{u.username}</b>{u.email && <div className="truncate text-xs text-ink-500">{u.email}</div>}</div>
+            <Badge tone={u.source === 'firebase' ? 'amber' : 'gray'}>{u.source === 'firebase' ? 'Firebase' : 'Local'}</Badge>
+            {u.username === me ? <Badge tone="blue">{u.role} (you)</Badge> : (
+              <select aria-label={`Role for ${u.username}`} className={inputCls + ' !w-auto !py-1'} value={u.role} onChange={(e) => setRole(u, e.target.value as AppUser['role'])}>
+                <option value="admin">Administrator</option><option value="viewer">Viewer</option><option value="pending">No access</option>
+              </select>
+            )}
+            {u.username !== me && <Button variant="ghost" className="!px-3 !py-1 text-xs !text-red-600" onClick={() => remove(u)}>Delete</Button>}
+          </li>
         ))}</ul>
       </Card>
     </div>

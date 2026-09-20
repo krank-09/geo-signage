@@ -85,6 +85,7 @@ def resolve(db: Session, device: Device, now: datetime | None = None, zones: lis
     ).hexdigest()[:12]
     return {
         "manifest_version": digest,
+        "zone_ids": sorted(zone_ids),
         "zone": {"id": primary.id, "name": primary.name} if primary else None,
         "reason": reason,
         "emergency": bool(candidates) and top[0] == 1,

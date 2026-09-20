@@ -6,8 +6,22 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import config
-from .api import assignments, auth, content, device_api, devices, monitoring, users, ws, zones
-from .database import Base, SessionLocal, engine
+from .api import (
+    alerts,
+    assignments,
+    auth,
+    broadcasts,
+    cities,
+    content,
+    device_api,
+    devices,
+    discovery,
+    monitoring,
+    users,
+    ws,
+    zones,
+)
+from .database import SessionLocal, sync_schema
 from .seed import seed
 from .services.monitor import monitor_loop
 
@@ -21,7 +35,7 @@ async def lifespan(app: FastAPI):
         log.warning("SECRET_KEY is the built-in default - set a real one before exposing this server")
     if config.DEFAULT_ADMIN_PASSWORD == "admin123":
         log.warning("Admin password is the default 'admin123' - change it in Users > Change my password")
-    Base.metadata.create_all(engine)
+    sync_schema()
     with SessionLocal() as db:
         seed(db)
     task = asyncio.create_task(monitor_loop())
@@ -33,7 +47,7 @@ app = FastAPI(title="Geo Signage API", version="1.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 for router in (auth.router, users.router, devices.router, device_api.router, content.router, zones.router,
-               assignments.router, monitoring.router, ws.router):
+               assignments.router, monitoring.router, broadcasts.router, alerts.router, cities.router, discovery.router, ws.router):
     app.include_router(router)
 
 

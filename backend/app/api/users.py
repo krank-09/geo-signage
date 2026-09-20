@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import User
-from ..schemas import PasswordChangeIn, UserIn
+from ..schemas import PasswordChangeIn, RoleIn, UserIn
 from ..security import current_user, hash_secret, require_admin, verify_secret
 from .deps import get_or_404
 
@@ -11,7 +11,8 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 def _out(u: User) -> dict:
-    return {"id": u.id, "username": u.username, "role": u.role, "created_at": u.created_at}
+    return {"id": u.id, "username": u.username, "role": u.role, "created_at": u.created_at, "email": u.email,
+            "source": "firebase" if u.firebase_uid else "local"}
 
 
 @router.post("/me/password")
@@ -36,6 +37,17 @@ def create_user(body: UserIn, db: Session = Depends(get_db), _: User = Depends(r
         raise HTTPException(409, "Username already exists")
     user = User(username=body.username, password_hash=hash_secret(body.password), role=body.role)
     db.add(user)
+    db.commit()
+    return _out(user)
+
+
+@router.put("/{user_id}/role")
+def set_role(user_id: int, body: RoleIn, db: Session = Depends(get_db), me: User = Depends(require_admin)):
+    """Approve a pending person (viewer/admin) or change someone's role."""
+    user = get_or_404(db, User, user_id, "User")
+    if user.id == me.id:
+        raise HTTPException(400, "You cannot change your own role")
+    user.role = body.role
     db.commit()
     return _out(user)
 

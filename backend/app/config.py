@@ -33,6 +33,19 @@ MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "signage-media")
 MINIO_SECURE = os.getenv("MINIO_SECURE", "0") == "1"
 
+# Health: a device whose score falls below this (percent) raises an alert; editable at runtime in the dashboard.
+HEALTH_ALERT_THRESHOLD = _int("HEALTH_ALERT_THRESHOLD", 50)
+
+# Firebase sign-in (optional). Leave FIREBASE_PROJECT_ID empty to disable it and use the built-in login only.
+FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "")
+FIREBASE_API_KEY = os.getenv("FIREBASE_API_KEY", "")
+FIREBASE_AUTH_DOMAIN = os.getenv("FIREBASE_AUTH_DOMAIN", "")
+FIREBASE_APP_ID = os.getenv("FIREBASE_APP_ID", "")
+# Comma-separated emails that become admins automatically on their first (verified) Firebase sign-in.
+FIREBASE_ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("FIREBASE_ADMIN_EMAILS", "").split(",") if e.strip()}
+# Local development only: accept the unsigned tokens issued by the Firebase Auth emulator (host:port).
+FIREBASE_AUTH_EMULATOR_HOST = os.getenv("FIREBASE_AUTH_EMULATOR_HOST", "")
+
 MAX_UPLOAD_MB = _int("MAX_UPLOAD_MB", 100)
 ALLOWED_EXTENSIONS = {
     ".jpg": ("image", "image/jpeg"),

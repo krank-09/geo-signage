@@ -118,3 +118,4 @@ select {
 
 button, a, select, summary, [role="tab"] { touch-action: manipulation; }
 * { -webkit-tap-highlight-color: transparent; }
+@keyframes marquee { to { transform: translateX(-100%); } }

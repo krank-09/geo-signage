@@ -31,6 +31,13 @@ services:
       OFFLINE_THRESHOLD_SECONDS: ${OFFLINE_THRESHOLD_SECONDS:-30}
       # 1 = seeded devices use DEMO-REG-00x (needed by the `sim` profile); 0 = random tokens printed in the backend log
       FIXED_DEMO_TOKENS: ${FIXED_DEMO_TOKENS:-1}
+      HEALTH_ALERT_THRESHOLD: ${HEALTH_ALERT_THRESHOLD:-50}
+      # Firebase sign-in is optional: leave FIREBASE_PROJECT_ID empty to use the built-in login only
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_API_KEY: ${FIREBASE_API_KEY:-}
+      FIREBASE_AUTH_DOMAIN: ${FIREBASE_AUTH_DOMAIN:-}
+      FIREBASE_APP_ID: ${FIREBASE_APP_ID:-}
+      FIREBASE_ADMIN_EMAILS: ${FIREBASE_ADMIN_EMAILS:-}
     depends_on:
       db: { condition: service_healthy }
       minio: { condition: service_started }  # backend retries until MinIO accepts connections

@@ -5,6 +5,8 @@ import { Eye, MagnifyingGlass, Plus, Television, WifiHigh, Warning, MapTrifold }
 import { api, isAdmin } from '../services/api'
 import type { Assignment, LogEntry, Zone } from '../types'
 import { useDevices } from '../hooks/useDevices'
+import { useHealthThreshold } from '../hooks/useHealthThreshold'
+import { HealthBar } from '../components/HealthBar'
 import MapView from '../components/MapView'
 import { Kpi } from '../components/dashboard/Kpi'
 import { DeviceDetailPanel } from '../components/dashboard/DeviceDetailPanel'
@@ -21,6 +23,8 @@ export default function Dashboard() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [timeline, setTimeline] = useState<Timeline | null>(null)
   const [alerts, setAlerts] = useState<Assignment[]>([])
+  const [healthAlerts, setHealthAlerts] = useState(0)
+  const [threshold] = useHealthThreshold()
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<'all' | 'online' | 'offline'>('all')
   const [query, setQuery] = useState('')
@@ -29,7 +33,10 @@ export default function Dashboard() {
 
   const loadLogs = useCallback(() => api.get('/monitoring/logs?limit=8').then((r) => setLogs(r.data)), [])
   const loadTimeline = useCallback(() => api.get('/monitoring/timeline').then((r) => setTimeline(r.data)), [])
-  const loadAlerts = useCallback(() => api.get('/emergency').then((r) => setAlerts(r.data)), [])
+  const loadAlerts = useCallback(() => {
+    api.get('/emergency').then((r) => setAlerts(r.data))
+    api.get('/alerts').then((r) => setHealthAlerts(r.data.length))
+  }, [])
   const loadZones = useCallback(() => api.get('/zones').then((r) => setZones(r.data)), [])
   useEffect(() => { loadZones(); loadLogs(); loadTimeline(); loadAlerts() }, [loadZones, loadLogs, loadTimeline, loadAlerts])
   useEffect(() => {
@@ -42,6 +49,7 @@ export default function Dashboard() {
     onEvent: (e) => {
       if (e.event === 'device_update') loadLogs()
       else if (e.event === 'assignments_changed') { loadZones(); loadAlerts() }
+      else if (e.event === 'alert' || e.event === 'alert_resolved' || e.event === 'alerts_changed') loadAlerts()
     },
   })
 
@@ -88,6 +96,7 @@ export default function Dashboard() {
             <Kpi title="Zones & alerts" icon={<MapTrifold size={16} weight="bold" />}>
               <div className="flex items-baseline gap-1.5"><span className="text-[40px] font-extrabold leading-none tracking-tight"><CountUp value={zones.length} /></span><span className="text-lg font-semibold text-ink-400">geofences</span></div>
               <div className={`mt-2 text-xs font-bold ${alerts.length ? 'text-red-600' : 'text-emerald-600'}`}>{alerts.length ? `${alerts.length} emergency override active` : 'No active emergency alerts'}</div>
+              <Link to="/monitoring" className={`text-xs font-bold ${healthAlerts ? 'text-red-600' : 'text-ink-400'}`}>{healthAlerts ? `${healthAlerts} device health alert${healthAlerts > 1 ? 's' : ''} open` : 'All device health OK'}</Link>
               <div className="relative mt-auto flex items-end gap-2 pt-4">
                 {zones.slice(0, 3).map((z, i) => (
                   <motion.div key={z.id} initial={{ y: 24, opacity: 0 }} animate={{ y: [0, 8, 0][i] ?? 0, opacity: 1 }} transition={{ delay: 0.3 + i * 0.1, type: 'spring', stiffness: 220, damping: 22 }}
@@ -142,6 +151,7 @@ export default function Dashboard() {
                     <span className="relative min-w-0 flex-1">
                       <span className="block truncate text-sm font-bold text-white"># {d.device_id}</span>
                       <span className="block truncate text-xs text-ink-300">{d.zone || 'Outside zones'} · {ago(d.last_seen)}</span>
+                      <HealthBar health={d.health} threshold={threshold} reasons={d.health_reasons} dark label={false} className="mt-1.5 max-w-[150px]" />
                     </span>
                     <span className="relative text-right">
                       <span className={`inline-block rounded-full px-2.5 py-0.5 text-[11px] font-bold ${active ? 'bg-white text-ink-900' : d.status === 'online' ? 'bg-emerald-400/15 text-emerald-300' : 'bg-red-400/15 text-red-300'}`}>{d.status === 'online' ? 'Online' : 'Offline'}</span>
@@ -155,7 +165,7 @@ export default function Dashboard() {
             {devices === null && [0, 1, 2].map((i) => <li key={i} className="h-[68px] animate-pulse rounded-[20px] bg-ink-800" />)}
           </ul>
           <div className="min-h-[420px]">
-            <AnimatePresence mode="wait">{current ? <DeviceDetailPanel key={current.device_id} d={current} /> : <div className="grid h-full place-items-center rounded-[28px] bg-ink-800 text-ink-300">Select a device</div>}</AnimatePresence>
+            <AnimatePresence mode="wait">{current ? <DeviceDetailPanel key={current.device_id} d={current} threshold={threshold} /> : <div className="grid h-full place-items-center rounded-[28px] bg-ink-800 text-ink-300">Select a device</div>}</AnimatePresence>
           </div>
         </div>
       </section>

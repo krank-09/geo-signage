@@ -4,6 +4,7 @@ import type { Assignment, Zone } from '../types'
 import { useDevices } from '../hooks/useDevices'
 import AssignmentForm from '../components/AssignmentForm'
 import MapView from '../components/MapView'
+import { CityPicker } from '../components/zones/CityPicker'
 import { Badge, Button, Card, Empty, ErrorNote, Field, inputCls, PageHeader } from '../components/ui'
 
 const circlePolygon = ([lat, lng]: [number, number], km: number, n = 32): [number, number][] =>
@@ -20,6 +21,7 @@ export default function Zones() {
   const [selected, setSelected] = useState<number | null>(null)
   const [mode, setMode] = useState<'none' | 'polygon' | 'circle'>('none')
   const [draft, setDraft] = useState<[number, number][]>([])
+  const [preview, setPreview] = useState<[number, number][] | null>(null)
   const [radius, setRadius] = useState(30)
   const [form, setForm] = useState({ name: '', priority: 10, color: '#3b82f6' })
   const [err, setErr] = useState('')
@@ -67,9 +69,15 @@ export default function Zones() {
         </Card>
       )}
       <div className="grid gap-6 xl:grid-cols-3">
-        <Card className="xl:col-span-2"><MapView zones={zones} devices={devices} draft={draft} height={520} selectedZone={selected}
+        <Card className="xl:col-span-2"><MapView zones={zones} devices={devices} draft={draft} preview={preview} height={520} selectedZone={selected}
           onMapClick={mode !== 'none' ? onMapClick : undefined} onZoneClick={(z) => mode === 'none' && setSelected(z.id)} /></Card>
         <div className="space-y-6">
+          {admin && (
+            <Card title="Add a city">
+              <p className="mb-3 text-sm text-ink-500">Pick a city and its boundary becomes a zone instantly. No drawing needed.</p>
+              <CityPicker onPreview={setPreview} onCreated={(z) => { load(); setSelected(z.id) }} />
+            </Card>
+          )}
           <Card title="Zones">
             <ul className="divide-y divide-ink-100/70">
               {zones.map((z) => (

@@ -12,13 +12,22 @@ if not defined PY goto no_python
 %PY% -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"
 if errorlevel 1 goto no_python
 
-if /i "%~1"=="--reset" if exist .env del .env
+if /i "%~1"=="--reset" (
+  if exist .env del .env
+  if exist .cache\identity.json del .cache\identity.json
+  if exist .cache\discovery_secret del .cache\discovery_secret
+)
 if exist .env goto have_env
 
 echo First-time setup - the presenter gives you the first three values.
 set /p SERVER_URL=Server URL (e.g. https://name.trycloudflare.com/api): 
-set /p DEVICE_ID=Device ID (e.g. DEV-001): 
+echo Device ID and token: type them if the presenter gave them, or just press Enter to let the dashboard find this display.
+set DEVICE_ID=
+set REGISTRATION_TOKEN=
+set /p DEVICE_ID=Device ID (e.g. DEV-001, or Enter to be found automatically): 
+if "%DEVICE_ID%"=="" goto skip_token
 set /p REGISTRATION_TOKEN=Registration token (e.g. A1B2-C3D4-E5F6): 
+:skip_token
 echo.
 echo Laptops have no GPS, so this display uses a simulated position.
 echo In the demo one display drives a route and the others stay put. Ask the presenter which this one is.

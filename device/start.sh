@@ -11,13 +11,17 @@ if [ -z "$PY" ] || ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3,
   exit 1
 fi
 
-[ "${1:-}" = "--reset" ] && rm -f .env
+[ "${1:-}" = "--reset" ] && rm -f .env .cache/identity.json .cache/discovery_secret
 
 if [ ! -f .env ]; then
   echo "First-time setup - the presenter gives you the first three values."
   read -r -p "Server URL (e.g. https://name.trycloudflare.com/api): " SERVER_URL
-  read -r -p "Device ID (e.g. DEV-001): " DEVICE_ID
-  read -r -p "Registration token (e.g. A1B2-C3D4-E5F6): " REGISTRATION_TOKEN
+  echo "Device ID and token: type them if the presenter gave them, or just press Enter to let the dashboard find this display."
+  read -r -p "Device ID (e.g. DEV-001, or Enter to be found automatically): " DEVICE_ID
+  REGISTRATION_TOKEN=""
+  if [ -n "${DEVICE_ID// }" ]; then
+    read -r -p "Registration token (e.g. A1B2-C3D4-E5F6): " REGISTRATION_TOKEN
+  fi
   SERVER_URL=$(echo "$SERVER_URL" | tr -d '[:space:]')
   DEVICE_ID=$(echo "$DEVICE_ID" | tr -d '[:space:]')
   REGISTRATION_TOKEN=$(echo "$REGISTRATION_TOKEN" | tr -d '[:space:]')
@@ -34,8 +38,8 @@ if [ ! -f .env ]; then
   fi
   {
     echo "SERVER_URL=$SERVER_URL"
-    echo "DEVICE_ID=$DEVICE_ID"
-    echo "REGISTRATION_TOKEN=$REGISTRATION_TOKEN"
+    [ -n "$DEVICE_ID" ] && echo "DEVICE_ID=$DEVICE_ID"
+    [ -n "$REGISTRATION_TOKEN" ] && echo "REGISTRATION_TOKEN=$REGISTRATION_TOKEN"
     echo "DISPLAY_PORT=8101"
     echo "OPEN_BROWSER=1"
     echo "KIOSK=0"

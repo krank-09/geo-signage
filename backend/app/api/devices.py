@@ -8,6 +8,7 @@ from ..models import Assignment, Device, DeviceGroup, DeviceLog, Impression, Use
 from ..realtime import announce_changes, notify_admins, notify_devices
 from ..schemas import DeviceIn, DeviceUpdate, GroupIn
 from ..security import current_user, hash_secret, require_admin
+from ..services import discovery
 from ..services.device_service import DEFAULT_CONFIG, add_log, broadcast_device, serialize, update_location
 from ..services.resolver import resolve
 from .deps import get_device_or_404, get_or_404
@@ -30,9 +31,11 @@ def create_device(body: DeviceIn, db: Session = Depends(get_db), _: User = Depen
         raise HTTPException(409, "Device ID already exists")
     if body.group_id and not db.get(DeviceGroup, body.group_id):
         raise HTTPException(400, "Unknown group")
+    if body.discovery_id and not discovery.is_listed(body.discovery_id):
+        raise HTTPException(409, "That display is no longer announcing itself. Refresh the list and pick it again.")
     token = _new_reg_token()
     d = Device(
-        device_id=body.device_id, name=body.name, group_id=body.group_id,
+        device_id=body.device_id, name=body.name, group_id=body.group_id, connection_type=body.connection_type,
         registration_token_hash=hash_secret(token), config=dict(DEFAULT_CONFIG),
     )
     db.add(d)
@@ -43,8 +46,10 @@ def create_device(body: DeviceIn, db: Session = Depends(get_db), _: User = Depen
     db.commit()
     db.refresh(d)
     broadcast_device(d)
+    # A claimed agent collects its credentials itself on its next announcement; nobody has to type the token.
+    claimed = bool(body.discovery_id) and discovery.claim(body.discovery_id, d.device_id, token)
     # The registration token is shown exactly once.
-    return {**serialize(d), "registration_token": token}
+    return {**serialize(d), "registration_token": token, "claimed_agent": claimed}
 
 
 @router.get("/devices/{device_id}")
@@ -58,6 +63,8 @@ def update_device(device_id: str, body: DeviceUpdate, db: Session = Depends(get_
     d = get_device_or_404(db, device_id)
     if body.name is not None:
         d.name = body.name
+    if body.connection_type is not None:
+        d.connection_type = body.connection_type
     if body.clear_group:
         d.group_id = None
     elif body.group_id is not None:

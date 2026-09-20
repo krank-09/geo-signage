@@ -24,6 +24,7 @@ import requests
 import websocket
 from bootstrap import detect_server, load_dotenv, open_display
 from cache import Cache
+from discovery import discover, load_identity
 from display_server import make_server
 from gps import FixedGPS, GpsdGPS, SimulatedGPS, place_coords
 
@@ -55,6 +56,7 @@ class DeviceAgent:
         self.last_sync = None
         self.position = None
         self.server_manifest_version = self.manifest.get("manifest_version")
+        self.broadcasts: list[dict] = []  # live announcements; each has a local `deadline` (None = until ended)
         self.impressions: list[dict] = []
         self.lock = threading.RLock()
         self.sync_event = threading.Event()
@@ -118,6 +120,11 @@ class DeviceAgent:
         remote = r.json()
         self.config = remote["config"]
         items = remote["items"]
+        now = time.time()
+        self.broadcasts = [
+            {**b, "deadline": None if b["remaining_seconds"] is None else now + b["remaining_seconds"]}
+            for b in remote.get("broadcasts", [])
+        ]
         for item in items:
             if not self.cache.has(item):
                 self._download(item)
@@ -270,6 +277,8 @@ class DeviceAgent:
                 "sim_offline": self.sim_offline, "ws": self.ws_connected,
                 "manifest_version": m.get("manifest_version"), "zone": m.get("zone"), "reason": m.get("reason"),
                 "emergency": bool(m.get("emergency")), "items": items, "config": self.config,
+                "broadcasts": [{k: b[k] for k in ("id", "message", "style", "severity")} for b in self.broadcasts
+                               if b["deadline"] is None or b["deadline"] > time.time()],
                 "position": self.position, "pending_impressions": len(self.impressions),
                 "last_sync": self.last_sync, "moving": getattr(self.gps, "moving", None),
             }
@@ -319,9 +328,9 @@ def main():
     load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
     p = argparse.ArgumentParser(description="Geo signage device agent")
     p.add_argument("--server", default=os.getenv("SERVER_URL", "http://localhost:8000"))
-    p.add_argument("--device-id", default=os.getenv("DEVICE_ID"), required=not os.getenv("DEVICE_ID"))
-    p.add_argument("--token", default=os.getenv("REGISTRATION_TOKEN"), required=not os.getenv("REGISTRATION_TOKEN"),
-                   help="registration token issued by the admin dashboard")
+    p.add_argument("--device-id", default=os.getenv("DEVICE_ID"),
+                   help="omit (with --token) to let the dashboard find and claim this display (discovery mode)")
+    p.add_argument("--token", default=os.getenv("REGISTRATION_TOKEN"), help="registration token issued by the admin dashboard")
     p.add_argument("--port", type=int, default=int(os.getenv("DISPLAY_PORT", 8101)))
     p.add_argument("--cache-dir", default=None)
     p.add_argument("--gps", choices=["sim", "fixed", "gpsd"], default=os.getenv("GPS_MODE", "sim"))
@@ -337,15 +346,33 @@ def main():
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
-                        format=f"%(asctime)s [{args.device_id}] %(message)s", datefmt="%H:%M:%S")
-    cache_dir = args.cache_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache", args.device_id)
+                        format="%(asctime)s [%(label)s] %(message)s", datefmt="%H:%M:%S")
+    label = [args.device_id or "unclaimed"]
+
+    class _Label(logging.Filter):  # the prefix changes once discovery assigns a device ID
+        def filter(self, record):
+            record.label = label[0]
+            return True
+
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(_Label())
+    cache_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
     try:  # validate the location settings first so a typo fails immediately, not after the network retries
         gps = build_gps(args)
     except ValueError as e:
         p.error(str(e))
     server = detect_server(args.server)
     log.info("Server: %s", server)
-    DeviceAgent(server, args.device_id, args.token, gps, cache_dir).run(
+    device_id, token = args.device_id, args.token
+    if not (device_id and token):
+        identity = load_identity(cache_root)  # claimed on an earlier run
+        if identity:
+            device_id, token = identity
+        else:
+            device_id, token = discover(server, gps, cache_root, VERSION, os.getenv("CONNECTION_TYPE") or None)
+    label[0] = device_id
+    cache_dir = args.cache_dir or os.path.join(cache_root, device_id)
+    DeviceAgent(server, device_id, token, gps, cache_dir).run(
         args.port, open_url=f"http://localhost:{args.port}/" if (args.open or args.kiosk) else None, kiosk=args.kiosk)
 
 

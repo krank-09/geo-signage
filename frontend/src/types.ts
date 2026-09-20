@@ -1,3 +1,5 @@
+export type ConnectionType = 'wifi' | 'ethernet' | 'cellular_4g' | 'cellular_5g' | 'other'
+
 export interface Device {
   id: number; device_id: string; name: string; status: 'online' | 'offline'; registered: boolean
   group_id: number | null; group: string | null; latitude: number | null; longitude: number | null
@@ -5,6 +7,7 @@ export interface Device {
   current_content: string | null; software_version: string | null; cpu: number | null; memory: number | null
   network: string | null; gps_ok: boolean; ws_connected: boolean
   config: { heartbeat_interval: number; location_interval: number; mute: boolean; fit: 'contain' | 'cover' }
+  connection_type: ConnectionType | null; health: number; health_reasons: string[]
   resolved?: { items: { name: string }[]; reason: string; emergency: boolean }
 }
 export interface Content { id: number; name: string; type: 'image' | 'video'; mime: string; size: number; duration: number; version: number; created_at: string }
@@ -16,3 +19,23 @@ export interface Assignment {
 }
 export interface Group { id: number; name: string; device_count: number }
 export interface LogEntry { id: number; ts: string; kind: string; message: string; device_id: string }
+
+export interface Broadcast {
+  id: number; message: string; style: 'ticker' | 'banner' | 'fullscreen'; severity: 'info' | 'warning' | 'critical'
+  zone_id: number | null; zone_name: string | null; group_id: number | null; group_name: string | null; device_id: string | null
+  created_by: string; created_at: string; expires_at: string | null; ended_at: string | null; active: boolean; remaining_seconds: number | null
+}
+export interface Alert {
+  id: number; device_id: string; device_name?: string | null; kind: 'offline' | 'health_low'; message: string; health: number
+  created_at: string; resolved_at: string | null; acknowledged_at: string | null; acknowledged_by: string | null
+}
+export interface City { id: string; name: string; state: string; center: [number, number]; source: 'osm' | 'approx'; area_km2: number; vertices: number; zone_exists: boolean }
+export interface CityDetail extends Omit<City, 'zone_exists' | 'vertices'> { polygon: [number, number][] }
+export interface DiscoveredAgent { id: string; name: string; latitude: number | null; longitude: number | null; connection_type: ConnectionType | null; software_version: string | null; seconds_ago: number; zones: string[] }
+export interface AppUser { id: number; username: string; role: 'admin' | 'viewer' | 'pending'; email: string | null; source: 'local' | 'firebase'; created_at: string }
+export interface AuthConfig {
+  local_login: boolean
+  firebase: { apiKey: string; authDomain: string; projectId: string; appId: string; emulatorHost: string | null } | null
+}
+
+export const CONNECTION_LABELS: Record<ConnectionType, string> = { wifi: 'Wi-Fi', ethernet: 'Ethernet', cellular_4g: 'Cellular 4G', cellular_5g: 'Cellular 5G', other: 'Other' }

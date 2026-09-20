@@ -10,6 +10,7 @@ const Devices = lazy(() => import('./pages/Devices'))
 const ContentPage = lazy(() => import('./pages/Content'))
 const Zones = lazy(() => import('./pages/Zones'))
 const Schedules = lazy(() => import('./pages/Schedules'))
+const Broadcast = lazy(() => import('./pages/Broadcast'))
 const Emergency = lazy(() => import('./pages/Emergency'))
 const Monitoring = lazy(() => import('./pages/Monitoring'))
 const Users = lazy(() => import('./pages/Users'))
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/content" element={<ContentPage />} />
         <Route path="/zones" element={<Zones />} />
         <Route path="/schedules" element={<Schedules />} />
+        <Route path="/broadcast" element={<Broadcast />} />
         <Route path="/emergency" element={<Emergency />} />
         <Route path="/monitoring" element={<Monitoring />} />
         <Route path="/users" element={<Users />} />

@@ -9,6 +9,7 @@ from ..database import get_db
 from ..models import Content, Device, Impression, Zone, utcnow
 from ..schemas import HeartbeatIn, ImpressionsIn, LocationIn, RegisterIn
 from ..security import create_device_token, current_device, verify_secret
+from ..services import broadcasts as live
 from ..services.device_service import add_log, broadcast_device, effective_config, touch, update_location
 from ..services.media import stream_content
 from ..services.resolver import resolve
@@ -23,12 +24,20 @@ def _own(device: Device, device_id: str) -> Device:
     return device
 
 
+def _with_broadcasts(db: Session, device: Device, r: dict) -> tuple[str, list[dict]]:
+    """Combined version = playlist hash + broadcast hash, so starting/ending/expiring a broadcast is noticed on the next
+    heartbeat or location reply even if the push was missed."""
+    items = live.active_for_device(db, device, set(r["zone_ids"]))
+    return r["manifest_version"] + live.version(items), items
+
+
 def _sync_state(db: Session, device: Device, zones: list[Zone] | None = None) -> dict:
     r = resolve(db, device, zones=zones)
+    version, _ = _with_broadcasts(db, device, r)
     return {
         "ok": True,
         "server_time": datetime.now(timezone.utc).isoformat(),
-        "manifest_version": r["manifest_version"],
+        "manifest_version": version,
         "zone": r["zone"],
         "config": effective_config(device),
     }
@@ -102,7 +111,8 @@ def content(device_id: str, db: Session = Depends(get_db), device: Device = Depe
     r = resolve(db, device)
     for item in r["items"]:
         item["url"] = f"/device/{device.device_id}/media/{item['content_id']}"
-    return {**r, "config": effective_config(device)}
+    version, items = _with_broadcasts(db, device, r)
+    return {**r, "manifest_version": version, "broadcasts": items, "config": effective_config(device)}
 
 
 @router.get("/{device_id}/media/{content_id}")

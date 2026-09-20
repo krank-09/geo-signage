@@ -23,6 +23,9 @@ def is_online(device: Device, now: datetime | None = None) -> bool:
 
 
 def serialize(device: Device) -> dict:
+    from .health import health  # local import: health imports helpers from this module
+
+    score, reasons = health(device)
     last = device.last_seen
     if last is not None and last.tzinfo is None:
         last = last.replace(tzinfo=timezone.utc)
@@ -32,6 +35,9 @@ def serialize(device: Device) -> dict:
         "name": device.name,
         "status": "online" if is_online(device) else "offline",
         "registered": device.registered_at is not None,
+        "connection_type": device.connection_type,
+        "health": score,
+        "health_reasons": reasons,
         "group_id": device.group_id,
         "group": device.group.name if device.group else None,
         "latitude": device.latitude,

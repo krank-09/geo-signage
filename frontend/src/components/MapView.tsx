@@ -15,13 +15,19 @@ function Fit({ zones, devices }: { zones: Zone[]; devices: Device[] }) {
   return null
 }
 
+function FitPreview({ polygon }: { polygon: [number, number][] | null }) {
+  const map = useMap()
+  useEffect(() => { if (polygon && polygon.length) map.fitBounds(polygon, { padding: [40, 40], maxZoom: 12 }) }, [polygon, map])
+  return null
+}
+
 function Clicks({ onClick }: { onClick: (p: [number, number]) => void }) {
   useMapEvents({ click: (e) => onClick([e.latlng.lat, e.latlng.lng]) })
   return null
 }
 
-export default function MapView({ zones, devices = [], draft, onMapClick, selectedZone, onZoneClick, height = 420 }: {
-  zones: Zone[]; devices?: Device[]; draft?: [number, number][]; onMapClick?: (p: [number, number]) => void
+export default function MapView({ zones, devices = [], draft, preview, onMapClick, selectedZone, onZoneClick, height = 420 }: {
+  zones: Zone[]; devices?: Device[]; draft?: [number, number][]; preview?: [number, number][] | null; onMapClick?: (p: [number, number]) => void
   selectedZone?: number | null; onZoneClick?: (z: Zone) => void; height?: number
 }) {
   return (
@@ -29,6 +35,7 @@ export default function MapView({ zones, devices = [], draft, onMapClick, select
       <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
       <Fit zones={zones} devices={devices} />
       {onMapClick && <Clicks onClick={onMapClick} />}
+      {preview && <><Polygon positions={preview} pathOptions={{ color: '#5b49eb', weight: 3, dashArray: '8 6', fillColor: '#5b49eb', fillOpacity: 0.18 }} /><FitPreview polygon={preview} /></>}
       {zones.map((z) => (
         <Polygon key={z.id} positions={z.polygon} eventHandlers={{ click: () => onZoneClick?.(z) }}
           pathOptions={{ color: z.color, weight: selectedZone === z.id ? 4 : 2, fillOpacity: selectedZone === z.id ? 0.35 : 0.15 }}>

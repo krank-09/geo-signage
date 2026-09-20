@@ -25,6 +25,17 @@
   #emergency span { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); background: #ef4444;
     padding: 6px 18px; border-radius: 999px; font-weight: 700; letter-spacing: .1em; }
   @keyframes blink { 50% { border-color: transparent; } }
+  /* live broadcasts */
+  #banner, #ticker, #fullscreen { display: none; position: fixed; z-index: 6; color: #fff; font-weight: 700; }
+  #banner { top: 14px; left: 50%; transform: translateX(-50%); max-width: 70vw; padding: 12px 28px; border-radius: 999px;
+    font-size: 26px; text-align: center; box-shadow: 0 10px 30px rgb(0 0 0 / .35); }
+  #ticker { left: 0; right: 0; bottom: 0; height: 64px; overflow: hidden; align-items: center; font-size: 30px; white-space: nowrap; }
+  #ticker span { display: inline-block; padding-left: 100%; animation: scroll linear infinite; }
+  #fullscreen { inset: 0; align-items: center; justify-content: center; text-align: center; padding: 6vw; font-size: 6vw; line-height: 1.15; }
+  .sev-info { background: #4338ca; } .sev-warning { background: #b45309; } .sev-critical { background: #b91c1c; }
+  body.has-ticker #info { bottom: 78px; }
+  @keyframes scroll { to { transform: translateX(-100%); } }
+  #status { z-index: 8; } #info { z-index: 8; }
   #dev { display: none; position: fixed; z-index: 9; top: 60px; right: 14px; width: 250px; padding: 12px; border-radius: 12px;
     background: rgba(15, 23, 42, .94); font-size: 13px; }
   #dev h4 { margin: 0 0 8px; } #dev button { margin: 3px 3px 3px 0; padding: 6px 10px; border: 0; border-radius: 6px;
@@ -35,6 +46,9 @@
 <body>
 <div id="stage"></div>
 <div id="empty"><h1 id="e-id">Waiting for content</h1><p>No content is assigned to this display yet.</p></div>
+<div id="banner"></div>
+<div id="ticker"><span id="ticker-text"></span></div>
+<div id="fullscreen"></div>
 <div id="emergency"><span>EMERGENCY</span></div>
 <div class="hud" id="status"><span class="dot"></span><span id="status-text">connecting</span></div>
 <div class="hud" id="info"></div>
@@ -96,7 +110,30 @@ function playNext(myEpoch) {
   if (item.type === 'video' && items.length === 1) el.play().catch(() => {});
 }
 
+let broadcastSig = '';
+const SEV_RANK = { info: 0, warning: 1, critical: 2 };
+function renderBroadcasts(list) {
+  const sig = JSON.stringify(list);
+  if (sig === broadcastSig) return;  // only touch the DOM when the set changes, so the ticker animation is not restarted
+  broadcastSig = sig;
+  const top = (arr) => arr.reduce((a, b) => (SEV_RANK[b.severity] >= SEV_RANK[a.severity] ? b : a), arr[0]);
+  const by = (style) => list.filter((b) => b.style === style);
+  const show = (el, sev) => { el.className = 'sev-' + sev; el.style.display = el.id === 'fullscreen' ? 'flex' : el.id === 'ticker' ? 'flex' : 'block'; };
+  const banners = by('banner'), tickers = by('ticker'), fulls = by('fullscreen');
+  const b = document.getElementById('banner'), t = document.getElementById('ticker'), f = document.getElementById('fullscreen');
+  if (banners.length) { const x = top(banners); b.textContent = x.message; show(b, x.severity); } else b.style.display = 'none';
+  if (fulls.length) { const x = top(fulls); f.textContent = x.message; show(f, x.severity); } else f.style.display = 'none';
+  if (tickers.length) {
+    const text = tickers.map((x) => x.message).join('      \u2022      ');
+    const span = document.getElementById('ticker-text'); span.textContent = text;
+    span.style.animationDuration = Math.max(12, text.length * 0.22) + 's';
+    show(t, top(tickers).severity);
+  } else t.style.display = 'none';
+  document.body.classList.toggle('has-ticker', tickers.length > 0);
+}
+
 function render() {
+  renderBroadcasts(state.broadcasts || []);
   const s = state;
   document.getElementById('empty').style.display = s.items.length ? 'none' : 'flex';
   document.getElementById('e-id').textContent = s.device_id + ' - waiting for content';
@@ -118,7 +155,7 @@ async function poll() {
     state = await r.json();
   } catch (e) { return; } // local agent hiccup: keep whatever is playing
   render();
-  const sig = state.manifest_version + '|' + state.items.map(i => i.src).join(',') + '|' + state.config.fit + '|' + state.config.mute;
+  const sig = state.items.map(i => i.src).join(',') + '|' + state.config.fit + '|' + state.config.mute;
   if (sig !== signature) {
     signature = sig; idx = 0; clearPlayback();
     if (state.items.length) playNext(epoch);

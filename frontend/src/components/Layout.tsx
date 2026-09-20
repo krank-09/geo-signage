@@ -1,14 +1,17 @@
 import { ReactNode, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, NavLink, useLocation, useNavigate, useOutlet } from 'react-router-dom'
 import { AnimatePresence, motion } from 'motion/react'
-import { Bell, SignOut, Television } from '@phosphor-icons/react'
+import { SignOut, Television } from '@phosphor-icons/react'
 import { api, getRole } from '../services/api'
+import type { Alert } from '../types'
 import { useLive } from '../hooks/useLive'
+import { AlertBell } from './AlertBell'
+import { useToast } from './Toasts'
 import { Avatar, PulseDot, Skeleton } from './ui'
 
 const nav: [string, string][] = [
   ['/', 'Overview'], ['/devices', 'Devices'], ['/content', 'Content'], ['/zones', 'Zones & map'],
-  ['/schedules', 'Schedules'], ['/emergency', 'Emergency'], ['/monitoring', 'Monitoring'], ['/users', 'Users'],
+  ['/schedules', 'Schedules'], ['/broadcast', 'Broadcast'], ['/emergency', 'Emergency'], ['/monitoring', 'Monitoring'], ['/users', 'Users'],
 ]
 
 /** Keeps the outgoing page's element alive while it animates out (otherwise it would flip to the new route instantly). */
@@ -48,13 +51,17 @@ function AnimatedOutlet() {
 
 export default function Layout() {
   const navigate = useNavigate()
-  const [offline, setOffline] = useState(0)
-  const [total, setTotal] = useState(0)
+  const [alerts, setAlerts] = useState<Alert[]>([])
   const navRef = useRef<HTMLElement>(null)
+  const toast = useToast()
 
-  const refresh = useCallback(() => api.get('/monitoring/overview').then((r) => { setOffline(r.data.devices_offline); setTotal(r.data.devices_total) }).catch(() => {}), [])
-  useEffect(() => { refresh(); const t = setInterval(refresh, 20000); return () => clearInterval(t) }, [refresh])
-  const live = useLive((e) => { if (e.event === 'device_update') refresh() })
+  const loadAlerts = useCallback(() => api.get('/alerts').then((r) => setAlerts(r.data)).catch(() => {}), [])
+  useEffect(() => { loadAlerts(); const t = setInterval(loadAlerts, 30000); return () => clearInterval(t) }, [loadAlerts])
+  const live = useLive((e) => {
+    if (e.event === 'alert') { toast('alert', e.alert.message); loadAlerts() }
+    else if (e.event === 'alert_resolved') { toast('ok', `Recovered: ${e.alert.device_id} is healthy again (${e.alert.health}%)`); loadAlerts() }
+    else if (e.event === 'alerts_changed') loadAlerts()
+  })
 
   // keep the active pill in view on narrow screens
   const { pathname } = useLocation()
@@ -91,10 +98,7 @@ export default function Layout() {
           <div className="glass hidden shrink-0 items-center gap-2 rounded-full px-3.5 py-2.5 text-xs font-semibold lg:flex" title={live ? 'Receiving live updates' : 'Reconnecting…'}>
             <PulseDot online={live} />{live ? 'Live' : 'Reconnecting'}
           </div>
-          <button onClick={() => navigate('/monitoring')} className="glass relative grid size-11 shrink-0 place-items-center rounded-full text-ink-700 transition hover:text-brand-600" aria-label={offline ? `${offline} of ${total} devices offline` : 'All devices online'}>
-            <Bell size={19} weight="bold" aria-hidden="true" />
-            {offline > 0 && <span className="absolute right-2.5 top-2.5 size-2.5 rounded-full bg-red-500 ring-2 ring-white" />}
-          </button>
+          <AlertBell alerts={alerts} onChange={loadAlerts} />
           <div className="glass group relative flex shrink-0 items-center gap-2 rounded-full py-1 pl-1 pr-1.5">
             <Avatar label={username} text={username.slice(0, 2).toUpperCase()} size={36} tint="#5b49eb" />
             <span className="hidden pr-1 text-left text-xs leading-tight md:block"><b className="block text-[13px]">{username}</b><span className="text-ink-500">{getRole()}</span></span>

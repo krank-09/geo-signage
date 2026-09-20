@@ -106,16 +106,16 @@ def seed(db: Session) -> None:
         db.add(Assignment(content_id=c.id, zone_id=zones[name].id, priority=10))
     _add_content(db, "EMERGENCY ALERT", "ALERT", "Please follow official instructions", (127, 29, 29), (239, 68, 68), 6)
 
-    devices = [
-        ("DEV-001", "Roadshow Van", north, "DEMO-REG-001", (30.7333, 76.7794)),
-        ("DEV-002", "Connaught Place Kiosk", north, "DEMO-REG-002", (28.6139, 77.2090)),
-        ("DEV-003", "Bandra Billboard", west, "DEMO-REG-003", (19.0760, 72.8777)),
+    devices = [  # id, name, group, registration token, connection type
+        ("DEV-001", "Roadshow Van", north, "DEMO-REG-001", "cellular_4g"),
+        ("DEV-002", "Connaught Place Kiosk", north, "DEMO-REG-002", "ethernet"),
+        ("DEV-003", "Bandra Billboard", west, "DEMO-REG-003", "wifi"),
     ]
-    for did, name, group, token, _ in devices:
+    for did, name, group, token, connection in devices:
         if not config.FIXED_DEMO_TOKENS:
             token = "-".join(secrets.token_hex(2).upper() for _ in range(3))
             log.warning("Registration token for %s: %s", did, token)  # shown once; rotate in the dashboard if lost
         db.add(Device(device_id=did, name=name, group_id=group.id, registration_token_hash=hash_secret(token),
-                      config=dict(DEFAULT_CONFIG)))
+                      connection_type=connection, config=dict(DEFAULT_CONFIG)))
     db.commit()
     log.info("Seeded demo data (3 devices, 3 zones, 5 content items)")
