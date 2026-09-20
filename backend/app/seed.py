@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy.orm import Session
 
 from . import config
-from .models import Assignment, Client, Content, Device, DeviceGroup, User, Zone
+from .models import Assignment, Client, Content, Device, DeviceGroup, Route, User, Zone
 from .security import hash_secret
 from .services.device_service import DEFAULT_CONFIG
 from .storage import get_storage
@@ -121,5 +121,12 @@ def seed(db: Session) -> None:
             log.warning("Registration token for %s: %s", did, token)  # shown once; rotate in the dashboard if lost
         db.add(Device(device_id=did, client_id=cid, name=name, group_id=group.id, registration_token_hash=hash_secret(token),
                       connection_type=connection, config=dict(DEFAULT_CONFIG)))
+    db.flush()
+    route = Route(client_id=cid, name="Chandigarh to Mumbai run", corridor_km=40, color="#e0662b", waypoints=[
+        {"name": "Chandigarh", "lat": 30.7333, "lng": 76.7794}, {"name": "Delhi", "lat": 28.6139, "lng": 77.2090},
+        {"name": "Jaipur", "lat": 26.9124, "lng": 75.7873}, {"name": "Mumbai", "lat": 19.0760, "lng": 72.8777}])
+    db.add(route)
+    db.flush()
+    db.query(Device).filter(Device.device_id == "DEV-001").update({Device.route_id: route.id})   # the roadshow van drives this route
     db.commit()
-    log.info("Seeded demo data (3 devices, 3 zones, 5 content items)")
+    log.info("Seeded demo data (3 devices, 3 zones, 5 content items, 1 route)")

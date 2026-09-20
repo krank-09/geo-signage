@@ -1,4 +1,6 @@
 """Endpoints called by device agents (device-token auth)."""
+import os
+import tempfile
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -8,6 +10,7 @@ from sqlalchemy.orm import Session
 from .. import config
 from ..database import get_db
 from ..models import Client, Content, Device, Impression, Zone, utcnow
+from ..realtime import notify_admins
 from ..schemas import HeartbeatIn, ImpressionsIn, LocationIn, RegisterIn, TamperBatchIn
 from ..security import create_device_token, current_device, verify_secret
 from ..services import broadcasts as live
@@ -15,6 +18,7 @@ from ..services import deviceauth, fleet, manifest, tamper
 from ..services.device_service import add_log, broadcast_device, effective_config, touch, update_location
 from ..services.media import ensure_hash, stream_content
 from ..services.resolver import resolve
+from ..storage import get_storage
 from .deps import get_or_404
 
 router = APIRouter(prefix="/device", tags=["device"])
@@ -164,6 +168,29 @@ def media(device_id: str, content_id: int, request: Request, db: Session = Depen
     if c.client_id != device.client_id:
         raise HTTPException(404, "Content not found")     # never serve another client's files, whatever the id
     return stream_content(c, request)
+
+
+@router.post("/screenshot")
+async def screenshot(request: Request, db: Session = Depends(get_db), device: Device = Depends(current_device)):
+    """The display's picture of its own screen (JPEG). Only the newest one is kept."""
+    data = await request.body()
+    if not data.startswith(b"\xff\xd8\xff") or len(data) > config.SCREENSHOT_MAX_KB * 1024:
+        raise HTTPException(400, f"A JPEG of at most {config.SCREENSHOT_MAX_KB} KB is required")
+    last = device.screenshot_at
+    if last is not None and (utcnow() - (last if last.tzinfo else last.replace(tzinfo=utcnow().tzinfo))).total_seconds() < 3:
+        raise HTTPException(429, "Screenshots are limited to one every 3 seconds")
+    key = f"shot-{device.id}.jpg"
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+        f.write(data)
+    try:
+        get_storage().put(key, f.name, "image/jpeg")
+    finally:
+        os.remove(f.name)
+    device.screenshot_key, device.screenshot_at = key, utcnow()
+    db.commit()
+    notify_admins("screenshot", device.client_id, device_id=device.device_id)
+    broadcast_device(device)
+    return {"ok": True}
 
 
 @router.post("/tamper")

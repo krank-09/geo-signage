@@ -71,8 +71,22 @@ class Zone(Base):
     color: Mapped[str] = mapped_column(String(16), default="#3b82f6")
 
 
+class Route(Base):
+    """An ordered path a vehicle-mounted display follows. Leg i is the stretch from waypoint i to waypoint i+1."""
+
+    __tablename__ = "routes"
+    __table_args__ = (Index("uq_routes_client_name", "client_id", "name", unique=True),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    waypoints: Mapped[list] = mapped_column(JSON)          # [{"name": str, "lat": float, "lng": float}, ...]
+    corridor_km: Mapped[float] = mapped_column(Float, default=25.0)   # farther than this from the path = off route
+    color: Mapped[str] = mapped_column(String(16), default="#e0662b")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Assignment(Base):
-    """Content -> (zone | group | everywhere), optionally time-windowed.
+    """Content -> (zone | group | route [leg] | everywhere), optionally time-windowed.
 
     zone_id NULL and group_id NULL means a global default.
     is_emergency assignments outrank everything else while active.
@@ -84,6 +98,8 @@ class Assignment(Base):
     content_id: Mapped[int] = mapped_column(ForeignKey("content.id", ondelete="CASCADE"))
     zone_id: Mapped[int | None] = mapped_column(ForeignKey("zones.id", ondelete="CASCADE"), nullable=True)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("device_groups.id", ondelete="CASCADE"), nullable=True)
+    route_id: Mapped[int | None] = mapped_column(ForeignKey("routes.id", ondelete="CASCADE"), nullable=True)
+    route_leg: Mapped[int | None] = mapped_column(Integer, nullable=True)      # NULL = the whole route
     start_time: Mapped[str | None] = mapped_column(String(5), nullable=True)  # "HH:MM"
     end_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
     priority: Mapped[int] = mapped_column(Integer, default=0)
@@ -94,6 +110,7 @@ class Assignment(Base):
     content: Mapped[Content] = relationship(lazy="joined")
     zone: Mapped[Zone | None] = relationship(lazy="joined")
     group: Mapped[DeviceGroup | None] = relationship(lazy="joined")
+    route: Mapped[Route | None] = relationship(lazy="joined")
 
 
 class Device(Base):
@@ -107,6 +124,19 @@ class Device(Base):
     token_version: Mapped[int] = mapped_column(Integer, default=0)  # bump to revoke issued JWTs
     registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     connection_type: Mapped[str | None] = mapped_column(String(16), nullable=True)  # wifi|ethernet|cellular_4g|cellular_5g|other
+
+    # route following (route_leg / progress / off-route are recomputed on every position update)
+    route_id: Mapped[int | None] = mapped_column(ForeignKey("routes.id", ondelete="SET NULL"), nullable=True)
+    route_leg: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    route_progress: Mapped[float | None] = mapped_column(Float, nullable=True)      # percent of the route covered
+    route_offset_km: Mapped[float | None] = mapped_column(Float, nullable=True)     # distance from the path
+    route_off: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # location history bookkeeping and the latest screenshot
+    track_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    track_lng: Mapped[float | None] = mapped_column(Float, nullable=True)
+    track_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    screenshot_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    screenshot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     status: Mapped[str] = mapped_column(String(16), default="offline")  # online | offline
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -141,6 +171,7 @@ class Device(Base):
     restarts: Mapped[list | None] = mapped_column(JSON, nullable=True)            # recent agent start times (epoch seconds)
 
     group: Mapped[DeviceGroup | None] = relationship(lazy="joined")
+    route: Mapped[Route | None] = relationship(lazy="joined")
     current_zone: Mapped[Zone | None] = relationship(lazy="joined")
 
 
@@ -184,6 +215,20 @@ class Broadcast(Base):
     group: Mapped[DeviceGroup | None] = relationship(lazy="joined")
 
 
+class LocationPoint(Base):
+    """One remembered position of a display (kept only when it moved or changed zone, and pruned after TRACK_RETENTION_DAYS)."""
+
+    __tablename__ = "location_points"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
+    device_id: Mapped[str] = mapped_column(String(64), index=True)
+    latitude: Mapped[float] = mapped_column(Float)
+    longitude: Mapped[float] = mapped_column(Float)
+    zone_id: Mapped[int | None] = mapped_column(Integer, nullable=True)          # zone at that moment (no FK: history outlives zones)
+    entered: Mapped[bool] = mapped_column(Boolean, default=False)                # this point is the moment the display entered zone_id
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class Alert(Base):
     """Raised when a device's health drops below the configured threshold; resolved when it recovers."""
 
@@ -191,7 +236,7 @@ class Alert(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
     device_id: Mapped[str] = mapped_column(String(64), index=True)
-    kind: Mapped[str] = mapped_column(String(16))  # offline | health_low | tamper
+    kind: Mapped[str] = mapped_column(String(16))  # offline | health_low | tamper | off_route
     message: Mapped[str] = mapped_column(Text)
     health: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

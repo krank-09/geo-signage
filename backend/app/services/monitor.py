@@ -6,6 +6,7 @@ from .. import config
 from ..database import SessionLocal
 from ..models import Device
 from ..realtime import hub
+from . import tracking
 from .device_service import add_log, is_online, serialize
 from .health import evaluate_alerts
 
@@ -27,9 +28,18 @@ def sweep_offline() -> dict:
         return {"devices": [serialize(d) for d in changed], **result}
 
 
+def prune_history() -> None:
+    with SessionLocal() as db:
+        tracking.prune(db)
+
+
 async def monitor_loop() -> None:
+    sweeps = 0
     while True:
         await asyncio.sleep(config.MONITOR_INTERVAL_SECONDS)
+        sweeps += 1
+        if sweeps % max(1, 3600 // config.MONITOR_INTERVAL_SECONDS) == 0:           # about once an hour
+            await asyncio.to_thread(prune_history)
         try:
             result = await asyncio.to_thread(sweep_offline)
             for dev in result["devices"]:

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Assignment, Content, DeviceGroup, Zone
+from ..models import Assignment, Content, DeviceGroup, Route, Zone
 from ..realtime import announce_changes
 from ..schemas import AssignmentIn
 from ..scope import Scope, get_scope, get_scoped, scoped, write_scope
@@ -16,6 +16,7 @@ def _out(a: Assignment) -> dict:
         "id": a.id, "client_id": a.client_id, "content_id": a.content_id, "content_name": a.content.name, "content_type": a.content.type,
         "zone_id": a.zone_id, "zone_name": a.zone.name if a.zone else None,
         "group_id": a.group_id, "group_name": a.group.name if a.group else None,
+        "route_id": a.route_id, "route_name": a.route.name if a.route else None, "route_leg": a.route_leg,
         "start_time": a.start_time, "end_time": a.end_time, "priority": a.priority,
         "is_emergency": a.is_emergency, "active": a.active, "created_at": a.created_at,
     }
@@ -33,6 +34,14 @@ def _validate(db: Session, body: AssignmentIn, scope: Scope) -> None:
         raise HTTPException(400, "Unknown zone")
     if body.group_id is not None and not owned(DeviceGroup, body.group_id):
         raise HTTPException(400, "Unknown group")
+    if body.route_id is not None and not owned(Route, body.route_id):
+        raise HTTPException(400, "Unknown route")
+    if body.route_leg is not None:
+        route = db.get(Route, body.route_id) if body.route_id is not None else None
+        if route is None:
+            raise HTTPException(400, "A route leg needs a route")
+        if body.route_leg >= len(route.waypoints) - 1:
+            raise HTTPException(400, f"That route has {len(route.waypoints) - 1} legs")
     if bool(body.start_time) != bool(body.end_time):
         raise HTTPException(400, "Provide both start_time and end_time, or neither")
 

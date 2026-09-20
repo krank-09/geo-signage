@@ -4,14 +4,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Assignment, Client, Device, DeviceGroup, DeviceLog, Impression
+from ..models import Assignment, Client, Device, DeviceGroup, DeviceLog, Impression, LocationPoint, Route
 from ..realtime import announce_changes, notify_admins, notify_devices
 from ..schemas import DeviceIn, DeviceUpdate, GroupIn
 from ..scope import Scope, get_scope, get_scoped, get_scoped_device, scoped, write_scope
 from ..security import hash_secret
 from ..services import discovery
+from ..services import routes as route_service
 from ..services.device_service import DEFAULT_CONFIG, add_log, broadcast_device, serialize, update_location
 from ..services.resolver import resolve
+from ..storage import get_storage
 
 router = APIRouter(tags=["devices"])
 
@@ -78,6 +80,14 @@ def update_device(device_id: str, body: DeviceUpdate, db: Session = Depends(get_
     elif body.group_id is not None:
         get_scoped(db, DeviceGroup, body.group_id, scope, "Group")
         d.group_id = body.group_id
+    if body.clear_route:
+        d.route_id = None
+        route_service.track(db, d)
+    elif body.route_id is not None:
+        get_scoped(db, Route, body.route_id, scope, "Route")
+        d.route_id = body.route_id
+        d.route_leg = None
+        route_service.track(db, d)
     if body.config is not None:
         d.config = body.config.model_dump()
         add_log(db, d.device_id, "config", "Configuration changed remotely")
@@ -94,8 +104,12 @@ def delete_device(device_id: str, db: Session = Depends(get_db), scope: Scope = 
     client_id = d.client_id
     db.query(DeviceLog).filter(DeviceLog.device_id == device_id).delete()
     db.query(Impression).filter(Impression.device_id == device_id).delete()
+    db.query(LocationPoint).filter(LocationPoint.device_id == device_id).delete()
+    shot = d.screenshot_key
     db.delete(d)
     db.commit()
+    if shot:
+        get_storage().delete(shot)
     notify_admins("device_removed", client_id, device_id=device_id)
     return {"ok": True}
 

@@ -53,6 +53,8 @@ DEVICE_AUTH_MODE = os.getenv("DEVICE_AUTH_MODE", "optional").lower()
 SERVER_SIGNING_KEY = os.getenv("SERVER_SIGNING_KEY", "")
 
 MAX_UPLOAD_MB = _int("MAX_UPLOAD_MB", 100)
+TRACK_RETENTION_DAYS = _int("TRACK_RETENTION_DAYS", 7)
+SCREENSHOT_MAX_KB = _int("SCREENSHOT_MAX_KB", 400)
 ALLOWED_EXTENSIONS = {
     ".jpg": ("image", "image/jpeg"),
     ".jpeg": ("image", "image/jpeg"),

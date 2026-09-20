@@ -48,9 +48,11 @@ def resolve(db: Session, device: Device, now: datetime | None = None, zones: lis
             continue
         if a.group_id is not None and a.group_id != device.group_id:
             continue
+        if a.route_id is not None and (a.route_id != device.route_id or (a.route_leg is not None and a.route_leg != device.route_leg)):
+            continue
         if not in_window(a.start_time, a.end_time, now):
             continue
-        specificity = (a.zone_id is not None) + (a.group_id is not None)
+        specificity = (a.zone_id is not None) + (a.group_id is not None) + (a.route_id is not None)
         candidates.append(((int(a.is_emergency), a.priority, specificity), a))
 
     items, reason = [], "no content assigned"
@@ -80,7 +82,9 @@ def resolve(db: Session, device: Device, now: datetime | None = None, zones: lis
         elif top[2] == 0:
             reason = "default content"
         else:
-            reason = f"zone: {winners[0].zone.name}" if winners[0].zone else f"group: {winners[0].group.name}"
+            w = winners[0]
+            reason = (f"zone: {w.zone.name}" if w.zone else f"route: {w.route.name}" + (f" leg {w.route_leg + 1}" if w.route_leg is not None else "")
+                      if w.route else f"group: {w.group.name}")
 
     digest = hashlib.sha1(
         "|".join(f"{i['content_id']}:{i['version']}:{i['duration']}" for i in items).encode()

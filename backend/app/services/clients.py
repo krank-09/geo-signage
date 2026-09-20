@@ -11,7 +11,7 @@ from ..models import Client
 log = logging.getLogger("clients")
 
 # tables whose rows belong to a client
-CLIENT_OWNED = ("devices", "content", "zones", "device_groups", "assignments", "broadcasts", "alerts")
+CLIENT_OWNED = ("devices", "content", "zones", "device_groups", "assignments", "broadcasts", "alerts", "routes", "location_points")
 
 
 def new_enrollment_key() -> str:

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from .. import config
 from ..models import Device, DeviceLog, Zone, utcnow
 from ..realtime import hub, notify_admins
+from . import routes, tracking
 from .geo import zones_containing
 
 DEFAULT_CONFIG = {"heartbeat_interval": 10, "location_interval": 3, "mute": True, "fit": "contain"}
@@ -64,6 +65,9 @@ def serialize(device: Device) -> dict:
         "gps_ok": device.gps_ok,
         "config": {**DEFAULT_CONFIG, **(device.config or {})},
         "ws_connected": hub.is_connected(device.device_id),
+        "route_id": device.route_id,
+        "route": routes.status(device, device.route),
+        "screenshot_at": device.screenshot_at.isoformat() if device.screenshot_at else None,
     }
 
 
@@ -91,6 +95,8 @@ def update_location(db: Session, device: Device, lat: float, lng: float, zones: 
         device.current_zone_id = new_id
         device.current_zone = new_zone
         add_log(db, device.device_id, "zone", f"Entered zone: {new_zone.name}" if new_zone else "Left all zones")
+    routes.track(db, device)
+    tracking.record(db, device, new_id, old_id != new_id)
 
 
 def broadcast_device(device: Device) -> None:

@@ -3,7 +3,20 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Alert, Assignment, Broadcast, Client, Content, Device, DeviceGroup, TamperEvent, User, Zone
+from ..models import (
+    Alert,
+    Assignment,
+    Broadcast,
+    Client,
+    Content,
+    Device,
+    DeviceGroup,
+    LocationPoint,
+    Route,
+    TamperEvent,
+    User,
+    Zone,
+)
 from ..schemas import ClientIn, ClientUpdate
 from ..scope import platform_admin
 from ..security import current_user, require_admin
@@ -84,10 +97,10 @@ def delete_client(client_id: int, db: Session = Depends(get_db), _: User = Depen
         raise HTTPException(404, "Client not found")
     if db.query(Client).count() <= 1:
         raise HTTPException(409, "You cannot delete the only client")
-    owned = sum(db.query(m).filter(m.client_id == client_id).count() for m in (Device, Content, Zone, DeviceGroup, Assignment, User))
+    owned = sum(db.query(m).filter(m.client_id == client_id).count() for m in (Device, Content, Zone, DeviceGroup, Assignment, Route, User))
     if owned:
         raise HTTPException(409, "This client still has data. Suspend it instead, or remove its devices, content and users first.")
-    for history in (Broadcast, Alert, TamperEvent):        # nothing live is left, only the record of what happened
+    for history in (Broadcast, Alert, TamperEvent, LocationPoint):        # nothing live is left, only the record of what happened
         db.query(history).filter(history.client_id == client_id).delete()
     db.delete(c)
     db.commit()

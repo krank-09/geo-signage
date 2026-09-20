@@ -19,6 +19,8 @@ from .api import (
     discovery,
     fleet,
     monitoring,
+    routes,
+    tracking,
     users,
     ws,
     zones,
@@ -51,7 +53,7 @@ app = FastAPI(title="Geo Signage API", version="1.2.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 for router in (auth.router, users.router, devices.router, device_api.router, content.router, zones.router,
-               assignments.router, monitoring.router, broadcasts.router, alerts.router, cities.router, discovery.router, clients.router, fleet.router, ws.router):
+               assignments.router, monitoring.router, broadcasts.router, alerts.router, cities.router, discovery.router, clients.router, fleet.router, routes.router, tracking.router, ws.router):
     app.include_router(router)
 
 

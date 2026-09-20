@@ -92,6 +92,8 @@ class DeviceUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
     group_id: int | None = None
     clear_group: bool = False
+    route_id: int | None = None
+    clear_route: bool = False
     connection_type: ConnectionType | None = None
     config: DeviceConfig | None = None
 
@@ -182,6 +184,8 @@ class AssignmentIn(BaseModel):
     content_id: int
     zone_id: int | None = None
     group_id: int | None = None
+    route_id: int | None = None
+    route_leg: int | None = Field(None, ge=0, le=200)
     start_time: str | None = None
     end_time: str | None = None
     priority: int = Field(0, ge=0, le=1000)
@@ -212,3 +216,16 @@ class ReleaseIn(BaseModel):
     version: str = Field(max_length=32)
     code_hash: str = Field(min_length=16, max_length=64)
     note: str = Field("", max_length=200)
+
+
+class WaypointIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
+class RouteIn(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    waypoints: list[WaypointIn] = Field(min_length=2, max_length=50)
+    corridor_km: float = Field(25.0, gt=0, le=500)
+    color: str = Field("#e0662b", pattern=r"^#[0-9a-fA-F]{6}$")

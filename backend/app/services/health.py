@@ -64,7 +64,7 @@ def evaluate_alerts(db: Session, now: datetime | None = None) -> dict[str, list[
     """Raise an alert for each device below the threshold and resolve the ones that recovered.
     Devices that have never connected are skipped (they are not 'dropping', they are not deployed yet)."""
     thresholds: dict[int | None, int] = {}
-    open_alerts = {a.device_id: a for a in db.query(Alert).filter(Alert.resolved_at.is_(None), Alert.kind != "tamper")}
+    open_alerts = {a.device_id: a for a in db.query(Alert).filter(Alert.resolved_at.is_(None), Alert.kind.in_(("offline", "health_low")))}
     raised, resolved = [], []
     for d in db.query(Device).filter(Device.last_seen.is_not(None)).all():
         score, reasons = health(d, now)
