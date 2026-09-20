@@ -71,6 +71,7 @@ def resolve(db: Session, device: Device, now: datetime | None = None, zones: lis
                     "duration": c.duration,
                     "version": c.version,
                     "mime": c.mime,
+                    "sha256": c.sha256,
                     "assignment_id": a.id,
                 }
             )

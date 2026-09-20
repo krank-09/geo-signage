@@ -46,6 +46,12 @@ FIREBASE_ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("FIREBASE_ADMIN_EM
 # Local development only: accept the unsigned tokens issued by the Firebase Auth emulator (host:port).
 FIREBASE_AUTH_EMULATOR_HOST = os.getenv("FIREBASE_AUTH_EMULATOR_HOST", "")
 
+# Device identity keys. "optional": displays with a bound key must sign every request, older displays without one are still
+# accepted (and flagged as unprotected). "required": unsigned displays are refused. Use "required" once every display is updated.
+DEVICE_AUTH_MODE = os.getenv("DEVICE_AUTH_MODE", "optional").lower()
+# Base64 32-byte Ed25519 seed used to sign playlists. If unset, one is generated once and kept in the database.
+SERVER_SIGNING_KEY = os.getenv("SERVER_SIGNING_KEY", "")
+
 MAX_UPLOAD_MB = _int("MAX_UPLOAD_MB", 100)
 ALLOWED_EXTENSIONS = {
     ".jpg": ("image", "image/jpeg"),

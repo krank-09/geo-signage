@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
-from fastapi import Depends, Header, HTTPException, Query, status
+from fastapi import Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from . import config
@@ -110,5 +110,26 @@ def require_admin(user: User = Depends(current_user)) -> User:
     return user
 
 
-def current_device(authorization: str | None = Header(None), db: Session = Depends(get_db)) -> Device:
-    return device_from_token(_bearer(authorization), db)
+async def current_device(request: Request, authorization: str | None = Header(None), db: Session = Depends(get_db)) -> Device:
+    """Token check plus, for displays with a bound identity key, a signature check. A stolen token or copied .env alone
+    is not enough to act as a bound display."""
+    from .services import deviceauth, tamper
+
+    device = device_from_token(_bearer(authorization), db)
+    sig = deviceauth.SigInfo(
+        signature=request.headers.get("x-signature"), timestamp=request.headers.get("x-timestamp"), nonce=request.headers.get("x-nonce"),
+        method=request.method, target=request.url.path + (f"?{request.url.query}" if request.url.query else ""),
+        body_sha256=deviceauth.sha256_hex(await request.body()))
+    if device.public_key:
+        try:
+            deviceauth.verify_request(device.device_id, device.public_key, sig)
+        except deviceauth.SignatureError as e:
+            if e.kind == "clock_skew":
+                tamper.record(db, device, "system_clock_wrong", e.reason, "warning", "server")
+            else:
+                label = {"unsigned_request": "unsigned_downgrade", "replay": "replayed_request"}.get(e.kind, "bad_signature")
+                tamper.record(db, device, label, f"{request.method} {request.url.path}: {e.reason}", "critical", "server")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid device signature")
+    elif config.DEVICE_AUTH_MODE == "required":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This server requires displays to hold an identity key; update the display agent")
+    return device

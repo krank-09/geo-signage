@@ -96,10 +96,33 @@ class DeviceUpdate(BaseModel):
     config: DeviceConfig | None = None
 
 
-class RegisterIn(BaseModel):
+class Inventory(BaseModel):
+    """What a display tells us about itself. All optional: displays running an older agent send none of it."""
+    software_version: str | None = Field(None, max_length=32)
+    os_name: str | None = Field(None, max_length=32)
+    os_version: str | None = Field(None, max_length=64)
+    os_arch: str | None = Field(None, max_length=24)
+    runtime_version: str | None = Field(None, max_length=32)
+    capabilities: list[str] | None = Field(None, max_length=32)
+    code_hash: str | None = Field(None, max_length=64)
+    boot_id: str | None = Field(None, max_length=64)
+
+
+class RegisterIn(Inventory):
     device_id: str
     registration_token: str
-    software_version: str | None = None
+    public_key: str | None = Field(None, max_length=64)      # base64 Ed25519, bound to this device on first registration
+    hw_fingerprint: str | None = Field(None, max_length=64)
+
+
+class TamperIn(BaseModel):
+    kind: str = Field(max_length=40)
+    detail: str = Field("", max_length=500)
+    at: str | None = None
+
+
+class TamperBatchIn(BaseModel):
+    events: list[TamperIn] = Field(max_length=50)
 
 
 class LocationIn(BaseModel):
@@ -108,14 +131,13 @@ class LocationIn(BaseModel):
     device_id: str | None = None
 
 
-class HeartbeatIn(BaseModel):
+class HeartbeatIn(Inventory):
     cpu: float | None = Field(None, ge=0, le=100)
     memory: float | None = Field(None, ge=0, le=100)
     network: str | None = None
     gps: bool | None = None
     content_version: str | None = None
     content_names: str | None = None
-    software_version: str | None = None
     latitude: float | None = Field(None, ge=-90, le=90)
     longitude: float | None = Field(None, ge=-180, le=180)
 
@@ -179,3 +201,14 @@ class AssignmentIn(BaseModel):
 class ContentUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
     duration: int | None = Field(None, ge=1, le=3600)
+
+
+class PolicyIn(BaseModel):
+    recommended_version: str | None = Field(None, max_length=32)
+    supported_version: str | None = Field(None, max_length=32)
+
+
+class ReleaseIn(BaseModel):
+    version: str = Field(max_length=32)
+    code_hash: str = Field(min_length=16, max_length=64)
+    note: str = Field("", max_length=200)
