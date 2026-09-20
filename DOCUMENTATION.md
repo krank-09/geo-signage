@@ -24,6 +24,7 @@ This is the only documentation file. Project context for coding assistants lives
   - [B8. Live broadcasts, health alerts, city zones, discovery and Firebase sign-in](#b8-live-broadcasts-health-alerts-city-zones-discovery-and-firebase-sign-in)
   - [B9. Clients, fleet inventory and tamper-proofing](#b9-clients-fleet-inventory-and-tamper-proofing)
   - [B10. Routes, location history and remote screenshots](#b10-routes-location-history-and-remote-screenshots)
+  - [B11. Phone and tablet display (web app)](#b11-phone-and-tablet-display-web-app)
 - [Part C: Presenter laptop setup](#part-c-presenter-laptop-setup)
   - [C1. What you need](#c1-what-you-need)
   - [C2. Check your laptop](#c2-check-your-laptop)
@@ -788,6 +789,45 @@ A **route** is an ordered list of stops (name + coordinates) with a **corridor**
 - **When.** Automatically every 60 seconds, and immediately when an admin presses **Capture now** (the server pushes a `screenshot` message over the display's WebSocket).
 - **Limits.** JPEG only, at most `SCREENSHOT_MAX_KB` (400), at most one every 3 s per display. Another client's screenshot answers 404. Deleting the display deletes its picture.
 - **What it is not.** It is a redraw of the display page's content, not a capture of the real screen pixels, so it needs the kiosk page to be open in a browser and will not show anything outside that page. It answers "what should be on screen and is the page alive", not "is the physical panel on".
+
+### B11. Phone and tablet display (web app)
+
+Any modern phone or tablet can be a display, with no install. Its browser runs a web app at `/display/` (`frontend/public/display/`: `index.html`, `app.js`, `sw.js`, `manifest.webmanifest`) that speaks the same protocol as the Python agent.
+
+| Feature | How the web app does it |
+|---|---|
+| **Identity and signing** | Generates an Ed25519 key with WebCrypto. The private key is stored in IndexedDB as a **non-extractable** key, so scripts on the page cannot read it out. Registration and every later request are signed exactly like the agent's. Browsers without Ed25519 (older Safari and Chrome) run unsigned, which works while `DEVICE_AUTH_MODE=optional`; the menu shows "No key". |
+| **Location** | The phone's own GPS through the browser Geolocation API (needs the user's permission and HTTPS), or a fixed city chosen at setup. |
+| **Playlist** | Same signed playlist: the server key is pinned at first registration, the Ed25519 signature is verified in the browser, and every file's SHA-256 is checked before it is stored. |
+| **Offline** | Verified files are stored in IndexedDB, the last playlist in local storage, and the page itself is kept by a **service worker**. Reloading with no network still starts and plays. |
+| **Tamper checks** | Cached files are re-hashed every 60 s; a changed file is deleted, re-downloaded and reported as `cache_tampered`. Wrong playlist signatures, hash mismatches, clock rollback and a changed server key are reported the same way. |
+| **Screenshots** | The page draws itself to a canvas and uploads a JPEG every 60 s and on **Capture now**. |
+| **Screen stays on** | Screen Wake Lock API, plus fullscreen from the first tap. |
+| **Inventory** | Reports Android or iOS, the version, architecture (Chrome), the browser as runtime, and the `web-display` capability, so phones appear on the Fleet page. |
+
+**Requirements.** HTTPS or `localhost` (WebCrypto, geolocation and service workers refuse plain `http://` on a network address, so use the tunnel address for a real phone), a current Chrome, Edge, Safari or Firefox, and the phone allowed to stay awake.
+
+#### Steps: admin
+
+1. Devices → **Add device**, fill in the ID and name, and create it. The one-time window now also shows a **phone link**: `https://<address>/display/#id=<ID>&token=<TOKEN>`. Copy it.
+2. Send that link to the phone (message, QR generator, email). The token sits after `#`, so it is not sent to any server and the page removes it from the address bar once read.
+
+#### Steps: phone
+
+1. Open the link in Chrome (Android) or Safari (iPhone). Use the tunnel address (`https://...`) when the phone is not on the same machine as the server.
+2. Choose **Use this device's GPS** (or a fixed city) and tap **Start display**. Allow the location prompt.
+3. The display goes fullscreen and starts playing. For a proper kiosk feel: Chrome menu → **Add to Home screen**, then open it from the icon (fullscreen, landscape).
+4. Turn off auto-lock (Settings → Display → Screen timeout), turn on Do Not Disturb, and use Screen pinning (Android) or Guided Access (iPhone) so it cannot be closed by accident.
+5. Tap the faint gear at the top left for the menu: identity, playlist verification, location, fullscreen, and **Forget this display**.
+
+#### Behaviour to know about
+
+- **A browser profile is a machine.** The key lives in that browser's storage. Clearing site data, using a private tab or switching browsers creates a new key, and the server refuses it (`clone_attempt`). The admin opens the device and chooses **Revoke and re-issue token**, then sets the display up again.
+- **Background tabs.** Phones throttle or freeze pages that are not on screen. The display must stay in the foreground; the wake lock is released when it is hidden and taken again when it returns.
+- **Location accuracy and battery.** GPS is requested at high accuracy, which drains the battery. Keep the phone charging.
+- **Weaker than the Python agent.** There is no code-integrity hash of the page's source beyond the hash of `app.js`, no tamper-evident state file, and the page cannot stop the phone's owner from opening dev tools. The private key is not extractable, but the device is still in the owner's hands.
+- **Updates.** The service worker serves the cached page and refreshes it in the background, so a new version starts on the next open. The version is `VERSION` in `app.js`; keep it equal to `device/VERSION`.
+- **Not used:** discovery (the phone needs its token), the demo control panel, and CPU and memory figures (browsers do not expose them, so the health score is based on connectivity and GPS).
 
 ---
 
@@ -1663,6 +1703,7 @@ Use these if you have time. Each one is independent.
 | Multi-client isolation | 19 backend tests (access matrix across every resource, cross-references, per-client names, quota, suspension, enrollment keys, hub scoping); the upgrade of the previous version's database on SQLite and PostgreSQL; the dashboard as a platform admin and as a client admin in headless Chromium (switcher, nav, empty other client) | Pass |
 | Fleet inventory | Backend tests (policy, filters, version compare, old unsigned agent still works) and a real agent reporting macOS, arm64, Python and capabilities into the Fleet page | Pass |
 | Tamper-proofing | 20 backend tests (signature, wrong key, replay, tampered body, clock skew, clone attempt, downgrade, fingerprint, signed playlist, hash chain, code baseline and trusted builds); live agents: a modified cache file was removed, re-downloaded and flagged; a copied identity was refused; a stolen token without the key got 401; an edited `state.json` and a modified source file were both reported; the demo controls, Host check and loopback bind were probed with `curl`; the flag was cleared and the record verified from the dashboard | Pass |
+| Phone web display | Emulated Pixel 7 in headless Chromium against a live server: link pre-fills the form, signed registration (server shows Android 14, arm64, Chrome, key bound), playlist signature verified, Delhi ad then Mumbai ad as the emulated GPS moved, live WebSocket, Capture now, offline playback and an offline reload from the service worker, a modified IndexedDB file removed and re-downloaded with `cache_tampered` reported, a stolen token without the key refused (401) | Pass |
 | Routes, history, screenshots | 9 backend tests (geometry, content following the leg, off-route alert raised and cleared, validation and ownership, history and zone visits, screenshot upload and limits, client isolation, route deletion). A live agent drove the seeded route with the display page open in headless Chromium: the real Delhi ad appeared as the screenshot, Capture now and the progress bar worked, a jump to Ahmedabad raised the off-route alert and jumping back cleared it. The Routes page, the leg picker in Schedules and the zone-visit card were checked in the browser | Pass |
 | Whole suite on PostgreSQL | `TEST_DATABASE_URL=postgresql+psycopg2://... pytest` (found and fixed a client delete that SQLite let through) | 94 pass |
 | Query cost | SQL statements per location update, before and after the refactor | 5 to 4 |
@@ -1672,6 +1713,8 @@ Use these if you have time. Each one is independent.
 | Area | Status |
 |---|---|
 | **Tamper-proofing on real hardware** | Detections were exercised on one macOS machine. Windows and Linux hardware fingerprints, the Linux kiosk checklist and the systemd hardening were not run. TPM / Secure Boot / attestation are not implemented. A user with root on a display can read its key. |
+| **Phone display on a real phone** | Tested with an emulated Android phone (Pixel 7 profile) in headless Chromium: signed registration, GPS-driven content, offline reload through the service worker, tamper detection, screenshots. Not tested on a physical phone, on iOS Safari, or with the screen locked and the page backgrounded. |
+| **nginx `/display/` route** | The new `location /display/` block was added and the display was tested through the Vite dev server (which needed a small middleware). A `nginx -t` check and the Docker build were attempted but the container run hung, so the production nginx route is untested. Check `https://<address>/display/` after rebuilding the frontend image. |
 | **Screenshots of a real kiosk** | Tested with the display page in headless Chromium. Chrome/Edge kiosk mode and a physical panel were not tested, and screenshots redraw the page rather than capturing the real screen. |
 | **Routes on real roads** | Only straight lines between stops were tested, with simulated GPS. |
 | **Multi-laptop use** | The display kit and the tunnel were only verified **from one machine**. No second physical laptop was used. |
@@ -1768,6 +1811,7 @@ Through nginx everything is under `/api`.
 | Routes | `GET/POST /routes`, `PUT/DELETE /routes/{id}`; assignments accept `route_id` and `route_leg`; `PUT /devices/{id}` accepts `route_id` / `clear_route` |
 | History and screenshots | `GET /devices/{id}/track?hours=`, `GET /monitoring/zone-visits?hours=`, `GET /devices/{id}/screenshot` (`?token=` allowed), `POST /devices/{id}/screenshot/request` |
 | Users | `GET/POST /users`, `POST /users/me/password`, `PUT /users/{id}/role`, `DELETE /users/{id}` |
+| Phone display | Static pages under `/display/` (no API of their own; it uses the device endpoints above) |
 | Devices | `GET/POST /devices`, `GET/PUT/DELETE /devices/{device_id}`, `POST /devices/{id}/rotate-token`, `POST /devices/{id}/sync`, `GET /devices/{id}/logs` |
 | Groups | `GET/POST /groups`, `DELETE /groups/{id}` |
 | Content | `GET /content`, `POST /content/upload`, `PUT /content/{id}`, `POST /content/{id}/replace`, `DELETE /content/{id}`, `GET /content/{id}/file` (`?token=` allowed for media tags) |
@@ -1926,6 +1970,7 @@ The response is **alert and flag only**: a critical alert appears and the displa
 | Dashboard | **React 19, TypeScript, Tailwind v4, Vite** | Typed UI, fast builds; pages are lazy-loaded chunks |
 | Maps | **Leaflet / react-leaflet + OpenStreetMap** | Free, no API key, polygon drawing and city outlines |
 | Animation | **Motion** | Page transitions, respecting reduced-motion settings |
+| Phone display | **Web app** (WebCrypto Ed25519, IndexedDB, service worker, Geolocation, Wake Lock) | Turns a phone or tablet into a display with no install and uses its own GPS |
 | Display agent | **Python** (`requests`, `websocket-client`, `psutil`, `cryptography`) | Runs on macOS, Windows and Linux with one small dependency list |
 | Display page | Plain **HTML/JS** served locally | No build step; plays from the cache |
 | Crypto | **Ed25519** signatures, **SHA-256**, **HMAC**, **Argon2**, **JWT (HS256)** | Small, modern, well-reviewed primitives |

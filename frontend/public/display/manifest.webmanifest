@@ -1,0 +1,15 @@
+{
+  "name": "Geo Signage Display",
+  "short_name": "Display",
+  "description": "Turns this phone or tablet into a location-aware signage display.",
+  "start_url": "/display/",
+  "scope": "/display/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    { "src": "/display/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/display/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

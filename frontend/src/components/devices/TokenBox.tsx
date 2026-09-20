@@ -7,6 +7,8 @@ export function TokenBox({ deviceId, token }: { deviceId: string; token: string 
       <code className="mt-1 block break-all rounded bg-ink-900 p-2 text-xs text-ink-100">
         python device/agent.py --server http://localhost:8000 --device-id {deviceId} --token {token}
       </code>
+      <p className="mt-3 text-xs text-amber-800">Or use a phone or tablet as the display: open this link in its browser (needs https, so use the tunnel address, or localhost):</p>
+      <code className="mt-1 block break-all rounded bg-ink-900 p-2 text-xs text-ink-100">{`${location.origin}/display/#id=${deviceId}&token=${token}`}</code>
     </div>
   )
 }
