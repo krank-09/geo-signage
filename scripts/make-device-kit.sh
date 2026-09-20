@@ -27,6 +27,10 @@ if [ -f DOCUMENTATION.md ]; then
   } > "$stage/device-kit/GUIDE.md"
 fi
 
+# The agent's code hash: paste it into Fleet > Trusted agent builds so displays running any other code get flagged.
+hash=$(cd "$stage/device-kit" && PYTHONDONTWRITEBYTECODE=1 python3 -c 'import identity; print(identity.code_hash())' 2>/dev/null || true)
+[ -n "$hash" ] && echo "Agent v$(cat "$stage/device-kit/VERSION") code hash: $hash"
+
 (cd "$stage" && zip -qr "$OLDPWD/dist/device-kit.zip" device-kit)
 echo "Created dist/device-kit.zip ($(du -h dist/device-kit.zip | cut -f1))"
 unzip -Z1 dist/device-kit.zip | sed 's#^device-kit/##' | grep -v '/$' | sort | sed 's/^/  /'

@@ -2,7 +2,8 @@ import os
 import tempfile
 
 _tmp = tempfile.mkdtemp()
-os.environ["DATABASE_URL"] = f"sqlite:///{_tmp}/test.db"
+# TEST_DATABASE_URL runs the whole suite against another database (e.g. Postgres) instead of a throwaway SQLite file
+os.environ["DATABASE_URL"] = os.getenv("TEST_DATABASE_URL") or f"sqlite:///{_tmp}/test.db"
 os.environ["LOCAL_STORAGE_DIR"] = f"{_tmp}/media"
 os.environ["STORAGE_BACKEND"] = "local"
 os.environ["OFFLINE_THRESHOLD_SECONDS"] = "2"
