@@ -15,10 +15,29 @@ if errorlevel 1 goto no_python
 if /i "%~1"=="--reset" if exist .env del .env
 if exist .env goto have_env
 
-echo First-time setup - the presenter gives you these three values.
+echo First-time setup - the presenter gives you the first three values.
 set /p SERVER_URL=Server URL (e.g. https://name.trycloudflare.com/api): 
 set /p DEVICE_ID=Device ID (e.g. DEV-001): 
 set /p REGISTRATION_TOKEN=Registration token (e.g. A1B2-C3D4-E5F6): 
+echo.
+echo Laptops have no GPS, so this display uses a simulated position.
+echo In the demo one display drives a route and the others stay put. Ask the presenter which this one is.
+set /p MOVES=Should this display MOVE along a route? (y/N): 
+if /i "%MOVES%"=="y" goto write_moving
+set /p PLACE=Which place is it in? (chandigarh, delhi, jaipur, mumbai, ahmedabad) [delhi]: 
+if "%PLACE%"=="" set PLACE=delhi
+(
+  echo SERVER_URL=%SERVER_URL%
+  echo DEVICE_ID=%DEVICE_ID%
+  echo REGISTRATION_TOKEN=%REGISTRATION_TOKEN%
+  echo DISPLAY_PORT=8101
+  echo OPEN_BROWSER=1
+  echo KIOSK=0
+  echo GPS_MODE=fixed
+  echo PLACE=%PLACE%
+) > .env
+goto env_written
+:write_moving
 (
   echo SERVER_URL=%SERVER_URL%
   echo DEVICE_ID=%DEVICE_ID%
@@ -31,6 +50,7 @@ set /p REGISTRATION_TOKEN=Registration token (e.g. A1B2-C3D4-E5F6):
   echo ROUTE_STEPS=8
   echo ROUTE_DWELL=6
 ) > .env
+:env_written
 echo Saved to .env (run start.bat --reset to change it).
 :have_env
 

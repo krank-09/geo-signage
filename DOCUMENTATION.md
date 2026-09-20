@@ -111,7 +111,7 @@ docker compose --profile sim up --build
 |---|---|
 | Admin dashboard | http://localhost:3000  (login `admin` / `admin123`) |
 | API docs | http://localhost:8000/docs |
-| Simulated device displays | http://localhost:8101 · 8102 · 8103 (press **d** for demo controls) |
+| Simulated device displays | http://localhost:8101 · 8102 · 8103 (press **d** for demo controls). **DEV-001 drives a route; DEV-002 stays in Delhi; DEV-003 stays in Mumbai.** |
 
 Without `--profile sim` you get only the server; run devices yourself (below). First start seeds an admin,
 3 devices (`DEV-001..003`, registration tokens `DEMO-REG-001..003`), 3 city zones, generated slides and an alert slide.
@@ -135,7 +135,7 @@ pip install -r device/requirements.txt && python simulator/run_all.py
 Single device / real hardware: `python device/agent.py --server http://SERVER:8000 --device-id DEV-001 --token <registration token> --port 8101`
 then open `http://localhost:8101` in Chromium kiosk mode
 (`chromium --kiosk --autoplay-policy=no-user-gesture-required http://localhost:8101`).
-Use `--gps gpsd` for a real receiver, `--gps fixed --lat .. --lng ..`, or the default simulated route.
+Location: `--gps fixed --place delhi` keeps a display in one place, `--gps sim --route chandigarh,delhi,jaipur,mumbai` makes it drive, `--gps gpsd` uses a real receiver. In the demo exactly **one** display drives (DEV-001, the van); the others stay put.
 `--server` accepts the backend URL, a tunnel root, or a tunnel root plus `/api`; the agent finds the right one.
 
 ### A3. Code layout
@@ -380,7 +380,7 @@ The agent (`device/agent.py`) is one Python process with a small local web serve
 | **Registration** | The admin creates a device in the dashboard and gets a one-time **registration token**. The agent sends device ID plus token to `/device/register` and receives a **device JWT** (valid 30 days). Both are saved in `state.json`. |
 | **Server discovery** | `detect_server()` accepts the tunnel root, the root plus `/api`, or a direct backend URL and finds the one whose `/health` answers. |
 | **Heartbeat** | Every 10 s (configurable from the dashboard): CPU, memory, network, GPS status, and which playlist version it is showing. The server records `last_seen`. |
-| **Location** | Every 3 s the GPS source is read and posted. Laptops use a **simulated route**. The code also supports a fixed point or a real receiver through gpsd (untested). |
+| **Location** | Every 3 s the GPS source is read and posted. Laptops have no GPS, so the position is simulated: **fixed** at a named place (`GPS_MODE=fixed`, `PLACE=delhi`) or a **route** through several places (`GPS_MODE=sim`). A real receiver through gpsd is supported but untested. In the demo one display drives and the others stay put. |
 | **Push plus polling** | The server pushes `{"type":"sync"}` over WebSocket on any change. The agent also polls every 5 s and compares `manifest_version` on every heartbeat/location reply, so a lost push is repaired within seconds. |
 | **Sync** | Fetch the playlist, download any missing files (streamed to a `.part` file, then renamed), save the manifest, trigger an immediate heartbeat so the dashboard's "now playing" updates. |
 | **Cache** | Files are named `<content id>-v<version>.<ext>`, so a replaced file is a new name and cannot be confused with the old one. Old files are removed when more than 20 accumulate. |
@@ -743,6 +743,8 @@ Registration token for DEV-003: C3D4-E5F6-A1B2
 | `DEV-002` | Connaught Place Kiosk | North India | *(paste)* |
 | `DEV-003` | Bandra Billboard | West India | *(paste)* |
 
+**Which display moves.** In the demo exactly one display drives: **`DEV-001` (Roadshow Van)** follows a route Chandigarh → Delhi → Jaipur → Mumbai. **`DEV-002` stays in Delhi and `DEV-003` stays in Mumbai** for the whole demo, so the audience sees two stable screens and one that changes as it crosses zones. Each display laptop is told which one it is (C11) and answers a question about it on first run.
+
 - **Need more than three laptops?** In the dashboard open **Devices → + Add device**. The token is shown **once**, so copy it right away.
 - **Lost a token?** Open the device in **Devices** and click **Revoke & re-issue token**. This also disconnects that laptop until it is re-entered.
 
@@ -877,7 +879,7 @@ Useful tunnel commands:
 
 ### C11. Send each display laptop its details
 
-Each display laptop needs the **kit zip** plus **three values**. Copy this message and fill it in for each laptop:
+Each display laptop needs the **kit zip**, **three values**, and **whether it moves**. Copy this message and fill it in for each laptop:
 
 ```
 Hi! Please set up the display laptop:
@@ -890,16 +892,22 @@ Hi! Please set up the display laptop:
    Device ID:           DEV-001
    Registration token:  A1B2-C3D4-E5F6
 
+4. It then asks "Should this display MOVE along a route?" and answers:
+
+   DEV-001 (the van):        y      <- the ONLY laptop that answers y
+   DEV-002 (Delhi kiosk):    n, then  delhi
+   DEV-003 (Mumbai board):   n, then  mumbai
+
 You need Python 3.10+ and internet. Leave the window open once it is running.
 ```
 
 Do not reuse one Device ID on two laptops. Send the token privately (not in a public chat).
 
-| Laptop | Device ID | Token | Sent? |
-|---|---|---|---|
-| 1 | `DEV-001` | | ☐ |
-| 2 | `DEV-002` | | ☐ |
-| 3 | `DEV-003` | | ☐ |
+| Laptop | Device ID | Moves? | Place | Token | Sent? |
+|---|---|---|---|---|---|
+| 1 | `DEV-001` | **yes** (route) | n/a | | ☐ |
+| 2 | `DEV-002` | no | `delhi` | | ☐ |
+| 3 | `DEV-003` | no | `mumbai` | | ☐ |
 
 ### C12. Confirm the displays are connected
 
@@ -908,7 +916,7 @@ As each laptop starts, watch your dashboard **Overview** (`http://localhost:3000
 - **Devices online** climbs `1 / 3`, `2 / 3`, `3 / 3`.
 - The **Recent activity** feed shows `Device registered` then `Device came online`.
 - Click a device in the dark list. Its panel shows **Live push**, its zone, and what it is playing.
-- The map dot appears and starts moving (the display laptops follow a simulated road trip).
+- The map dots appear: **DEV-001 starts driving its route**, while DEV-002 stays in Delhi and DEV-003 stays in Mumbai. If a display that should stay put is moving, its laptop was set up as "moves": run `./start.sh --reset` there (see [D8](#d8-troubleshooting)).
 
 On each **display laptop** the top-right pill should say **ONLINE - live**.
 
@@ -944,7 +952,7 @@ Run the whole script once with the real laptops before the audience arrives. Ful
 
 - Clear any active emergency alert.
 - Delete or pause the Flash Sale assignment.
-- Put display GPS back on the route (`d` → **Resume route**).
+- Put DEV-001's GPS back on its route (`d` → **Resume route**). The fixed displays need nothing.
 
 ### C14. On the day: run of show
 
@@ -1084,13 +1092,14 @@ Time needed: about 10 minutes the first time, 30 seconds afterwards.
 
 ### D0. What you need
 
-**From the presenter** (three values, usually sent as a message):
+**From the presenter** (usually sent as a message):
 
 | Value | Looks like |
 |---|---|
 | Server URL | `https://abcde-1-2-3-4.free.pinggy.net` (adding `/api` at the end also works) |
 | Device ID | `DEV-001` |
 | Registration token | `A1B2-C3D4-E5F6` |
+| Does this display move? | **No** for most laptops (then also the **place**, for example `delhi`). **Yes** for exactly one laptop, the van. |
 
 **On your laptop:**
 
@@ -1137,13 +1146,19 @@ If it prints `Python 3.10` or higher, go to Step 2. Otherwise:
    ```
    If you get "permission denied", run `bash start.sh` instead.
 
-#### First run only: answer three questions
+#### First run only: answer the setup questions
 
 ```
 Server URL (e.g. https://name.trycloudflare.com/api):   <paste the Server URL>
 Device ID (e.g. DEV-001):                                <your Device ID>
 Registration token (e.g. A1B2-C3D4-E5F6):                <your token>
+
+Should this display MOVE along a route? [y/N]:           <n for most laptops, y only for the van>
+Which place is it in? (chandigarh, delhi, ...) [delhi]:  <only asked if you answered n>
 ```
+
+Laptops have no GPS, so the position is simulated. **Most displays should stay in one place**: press Enter (or `n`) and type the place the
+presenter gave you. Answer `y` only if the presenter says this laptop is the moving one.
 
 The answers are saved in a file called `.env`, so next time you just run the start script again.
 The script then creates a private Python environment and installs three small libraries (takes 30–60 seconds once).
@@ -1177,7 +1192,7 @@ On the display, look at the two pills:
 
 Ask the presenter to look at the dashboard: your device should show **Online** and its content name should match yours.
 
-The display follows a **simulated road trip** (Chandigarh → Delhi → Jaipur → Mumbai) because laptops have no GPS. The content changes as the position crosses each city zone. Jaipur is outside every zone, so you see the default *Welcome* slide there.
+A display that stays put shows the same content all the time, for its city's zone. The one display that **moves** follows a simulated road trip (Chandigarh → Delhi → Jaipur → Mumbai) because laptops have no GPS. The content changes as the position crosses each city zone. Jaipur is outside every zone, so you see the default *Welcome* slide there.
 
 ### D6. Demo controls (press `d`)
 
@@ -1187,8 +1202,8 @@ Press **`d`** on the display to show a small control panel:
 |---|---|
 | **Cut network** | Simulates an internet outage. The pill turns red (*OFFLINE - playing cached content*) and the display keeps playing. The dashboard marks the device offline after roughly 30–45 seconds. |
 | **Restore network** | Reconnects, checks for new content and updates the display. |
-| **Chandigarh / Delhi / Jaipur / Mumbai** | Jumps the fake GPS to that city and pauses the route. |
-| **Resume route / Pause** | Continues or freezes the road trip. |
+| **Chandigarh / Delhi / Jaipur / Mumbai** | Jumps the fake GPS to that city and pauses the route. Only shown on the display that moves. |
+| **Resume route / Pause** | Continues or freezes the road trip. Only shown on the display that moves. On a display that stays put the panel says "(fixed location)" and hides these. |
 
 Press `d` again to hide the panel.
 
@@ -1200,8 +1215,8 @@ Press `d` again to hide the panel.
 |---|---|
 | Start again later | Run `./start.sh` (or double-click `start.bat`) |
 | Change the server URL, device ID or token | Run `./start.sh --reset` (or `start.bat --reset`) |
-| Change the route | Edit `.env`, for example `ROUTE=delhi,mumbai`. Known places: `chandigarh, delhi, jaipur, mumbai, ahmedabad` |
-| Stay in one place | In `.env` set `GPS_MODE=fixed`, `LAT=28.6139`, `LNG=77.2090` |
+| Make this display stay in one place | In `.env` set `GPS_MODE=fixed` and `PLACE=delhi` (or `mumbai`, `chandigarh`, `jaipur`, `ahmedabad`), then restart. Or run `./start.sh --reset` and answer `n`. |
+| Make this display drive a route | In `.env` set `GPS_MODE=sim` and `ROUTE=chandigarh,delhi,jaipur,mumbai`, then restart. Or run `./start.sh --reset` and answer `y`. |
 | Run two displays on one laptop | Copy the folder, give the copy a different `DISPLAY_PORT` (for example `8102`) and a different Device ID |
 | Stop | Press `Ctrl` + `C` in the window, or close it |
 | Remove everything | Delete the `device-kit` folder |
@@ -1221,6 +1236,8 @@ Press `d` again to hide the panel.
 | "Address already in use" / port 8101 busy | Another program or another display uses it. Set a different `DISPLAY_PORT` in `.env` and open that port instead. |
 | A page titled "Caution … served through pinggy.io" appears | Only in a browser pointed at the *dashboard's* tunnel address. Click **Enter site** once. The display at `localhost` never shows it. |
 | Two displays flip between online and offline | Two laptops are using the same Device ID. Each laptop needs its own. |
+| My display keeps changing content but should stay put | It was set up as the moving display. Run `./start.sh --reset`, answer **n**, and type its place (or set `GPS_MODE=fixed` and `PLACE=<place>` in `.env`). |
+| The display says `Unknown place '…'` and stops | The place is misspelled. Use one of: chandigarh, delhi, jaipur, mumbai, ahmedabad. |
 
 If something else goes wrong, copy the last 10 lines from the start script's window and send them to the presenter.
 
@@ -1280,7 +1297,8 @@ A compact deck plan. **Left = what is on the slide. Right = what to say.** Rough
 - Two or three display laptops already running and showing 🟢 **ONLINE - live**.
 - The dashboard open on *Overview*, logged in. Click through Pinggy's "Enter site" page **before** the audience arrives.
 - One extra image uploaded named something obvious such as **"Flash Sale"**, not yet assigned.
-- The display laptops' `d` panel is available in case you need to jump the GPS.
+- **Only DEV-001 moves.** DEV-002 (Delhi) and DEV-003 (Mumbai) stay put on purpose, so the audience sees two stable screens next to one that changes. Check on the dashboard that only DEV-001's dot is moving.
+- The van laptop's `d` panel is available in case you need to jump the GPS (fixed displays do not show those buttons).
 
 **Total: about 10 minutes.**
 
@@ -1427,9 +1445,10 @@ A compact deck plan. **Left = what is on the slide. Right = what to say.** Rough
 | `SERVER_URL` | `http://localhost:8000` | Backend, tunnel root, or tunnel root plus `/api`. |
 | `DEVICE_ID`, `REGISTRATION_TOKEN` | required | Identity from the dashboard. |
 | `DISPLAY_PORT` | `8101` | Port of the local display page. |
-| `GPS_MODE` | `sim` | `sim`, `fixed` or `gpsd`. |
+| `GPS_MODE` | `sim` in the agent; the start scripts write `fixed` unless you answer that the display moves | `fixed` (stay in one place), `sim` (drive a route) or `gpsd` (real receiver). |
+| `PLACE` | `delhi` (start scripts) | Where a `fixed` display is: chandigarh, delhi, jaipur, mumbai or ahmedabad. |
 | `ROUTE`, `ROUTE_STEPS`, `ROUTE_DWELL` | `chandigarh,delhi,jaipur,mumbai`, `10`, `5` | Simulated road trip. Places: chandigarh, delhi, jaipur, mumbai, ahmedabad. |
-| `LAT`, `LNG` | `28.6139`, `77.2090` | Position for `GPS_MODE=fixed`. |
+| `LAT`, `LNG` | `28.6139`, `77.2090` | Exact coordinates for `GPS_MODE=fixed` when `PLACE` is not set. |
 | `OPEN_BROWSER`, `KIOSK` | off | Open the display page; `KIOSK=1` opens Chrome or Edge fullscreen. |
 
 ### G2. API surface

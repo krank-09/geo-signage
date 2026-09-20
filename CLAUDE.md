@@ -58,6 +58,9 @@ in the backend log). There is no CI. Tests cover the backend only; the agent and
   from `display_server.py`, so playback never touches the network. Simulated outage: `POST /api/control {"offline": true}` on the agent (display's `d` panel, `run_all.py`).
 - **Agent invariants** (`device/agent.py`): heartbeat, location, websocket and sync loops are threads sharing one token. Registration rotates the credential, so it is serialized with `reg_lock`
   and skipped if another thread already re-registered. Do not remove that lock. `bootstrap.py` holds `.env` loading, `detect_server()` (accepts tunnel root, root + `/api`, or backend URL) and browser/kiosk launch.
+- **Demo topology:** exactly one display moves. `DEV-001` drives a route (`GPS_MODE=sim`); `DEV-002` (Delhi) and `DEV-003` (Mumbai) are `GPS_MODE=fixed` with `PLACE=<name>` (`device/gps.py` `place_coords`).
+  The simulator (`run_all.py`, hence the Docker `sim` profile) and the kit's `start.sh`/`start.bat` prompt both encode this; the prompt defaults to fixed, because writing the drive route for every laptop made all three displays change content.
+  The display's `d` panel hides the GPS jump/route buttons when `moving` is null (fixed). A bad `PLACE` fails immediately with the list of known places.
 - **Storage** (`storage.py`): `STORAGE_BACKEND=minio|local`; media is always streamed through the API with Range support (`services/media.py`), so every read is authenticated. Uploads are checked by extension,
   magic bytes and size while streaming.
 - **API base.** Backend routes have no `/api` prefix; nginx and the Vite proxy strip it. Admin websocket: `/api/ws/admin?token=`.

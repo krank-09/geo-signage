@@ -8,7 +8,7 @@ Run:  python agent.py --server http://localhost:8000 --device-id DEV-001 --token
                       --route chandigarh,delhi,jaipur,mumbai --port 8101
 
 Every option can also come from environment variables or a `.env` file next to this script
-(SERVER_URL, DEVICE_ID, REGISTRATION_TOKEN, DISPLAY_PORT, GPS_MODE, ROUTE, ROUTE_STEPS, ROUTE_DWELL, LAT, LNG,
+(SERVER_URL, DEVICE_ID, REGISTRATION_TOKEN, DISPLAY_PORT, GPS_MODE, PLACE, ROUTE, ROUTE_STEPS, ROUTE_DWELL, LAT, LNG,
 OPEN_BROWSER, KIOSK) - see .env.example. `./start.sh` / `start.bat` wrap all of this for display laptops.
 """
 import argparse
@@ -22,11 +22,10 @@ from datetime import datetime, timezone
 import psutil
 import requests
 import websocket
-
 from bootstrap import detect_server, load_dotenv, open_display
 from cache import Cache
 from display_server import make_server
-from gps import FixedGPS, GpsdGPS, SimulatedGPS
+from gps import FixedGPS, GpsdGPS, SimulatedGPS, place_coords
 
 VERSION = "1.1.0"
 log = logging.getLogger("agent")
@@ -308,7 +307,7 @@ def build_gps(args):
     if args.gps == "gpsd":
         return GpsdGPS()
     if args.gps == "fixed":
-        return FixedGPS(args.lat, args.lng)
+        return FixedGPS(*place_coords(args.place)) if args.place else FixedGPS(args.lat, args.lng)
     return SimulatedGPS(args.route.split(","), steps=args.steps, dwell=args.dwell, loop=not args.no_loop)
 
 
@@ -330,6 +329,7 @@ def main():
     p.add_argument("--steps", type=int, default=int(os.getenv("ROUTE_STEPS", 10)), help="ticks between waypoints")
     p.add_argument("--dwell", type=int, default=int(os.getenv("ROUTE_DWELL", 5)), help="ticks spent at each waypoint")
     p.add_argument("--no-loop", action="store_true")
+    p.add_argument("--place", default=os.getenv("PLACE", ""), help="for --gps fixed: a known place name (delhi, mumbai, ...)")
     p.add_argument("--lat", type=float, default=float(os.getenv("LAT", 28.6139)))
     p.add_argument("--lng", type=float, default=float(os.getenv("LNG", 77.2090)))
     p.add_argument("--open", action="store_true", default=_flag("OPEN_BROWSER"), help="open the display page in a browser")
@@ -339,9 +339,13 @@ def main():
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format=f"%(asctime)s [{args.device_id}] %(message)s", datefmt="%H:%M:%S")
     cache_dir = args.cache_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache", args.device_id)
+    try:  # validate the location settings first so a typo fails immediately, not after the network retries
+        gps = build_gps(args)
+    except ValueError as e:
+        p.error(str(e))
     server = detect_server(args.server)
     log.info("Server: %s", server)
-    DeviceAgent(server, args.device_id, args.token, build_gps(args), cache_dir).run(
+    DeviceAgent(server, args.device_id, args.token, gps, cache_dir).run(
         args.port, open_url=f"http://localhost:{args.port}/" if (args.open or args.kiosk) else None, kiosk=args.kiosk)
 
 

@@ -10,6 +10,14 @@ WAYPOINTS = {
 }
 
 
+def place_coords(name: str) -> tuple[float, float]:
+    """Coordinates of a known place name (case-insensitive)."""
+    key = name.strip().lower()
+    if key not in WAYPOINTS:
+        raise ValueError(f"Unknown place '{name}'. Choose one of: {', '.join(sorted(WAYPOINTS))}")
+    return WAYPOINTS[key]
+
+
 class GpsProvider:
     def read(self):
         """Return (lat, lng) or None when there is no fix."""

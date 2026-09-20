@@ -42,10 +42,12 @@
   <h4>Demo controls</h4>
   <button class="d" onclick="ctl({offline:true})">Cut network</button>
   <button class="g" onclick="ctl({offline:false})">Restore network</button>
+  <div id="gps-controls">
   <div style="margin-top:8px">Jump GPS to:</div>
   <button onclick="ctl({goto:'chandigarh'})">Chandigarh</button><button onclick="ctl({goto:'delhi'})">Delhi</button>
   <button onclick="ctl({goto:'jaipur'})">Jaipur</button><button onclick="ctl({goto:'mumbai'})">Mumbai</button>
   <div style="margin-top:8px"><button onclick="ctl({moving:true})">Resume route</button><button onclick="ctl({moving:false})">Pause</button></div>
+  </div>
   <small id="dev-pos"></small>
 </div>
 <script>
@@ -106,7 +108,8 @@ function render() {
   document.getElementById('info').textContent =
     `${s.device_id}  |  ${s.reason || (s.zone ? s.zone.name : 'no zone')}` + (s.pending_impressions ? `  |  ${s.pending_impressions} queued` : '');
   document.getElementById('dev-pos').textContent = s.position
-    ? `GPS ${s.position[0].toFixed(4)}, ${s.position[1].toFixed(4)}${s.moving === false ? ' (paused)' : ''}` : 'No GPS fix';
+    ? `GPS ${s.position[0].toFixed(4)}, ${s.position[1].toFixed(4)}${s.moving === null ? ' (fixed location)' : s.moving === false ? ' (paused)' : ''}` : 'No GPS fix';
+  document.getElementById('gps-controls').style.display = s.moving === null ? 'none' : '';
 }
 
 async function poll() {

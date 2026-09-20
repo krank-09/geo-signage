@@ -14,25 +14,33 @@ fi
 [ "${1:-}" = "--reset" ] && rm -f .env
 
 if [ ! -f .env ]; then
-  echo "First-time setup - the presenter gives you these three values."
+  echo "First-time setup - the presenter gives you the first three values."
   read -r -p "Server URL (e.g. https://name.trycloudflare.com/api): " SERVER_URL
   read -r -p "Device ID (e.g. DEV-001): " DEVICE_ID
   read -r -p "Registration token (e.g. A1B2-C3D4-E5F6): " REGISTRATION_TOKEN
   SERVER_URL=$(echo "$SERVER_URL" | tr -d '[:space:]')
   DEVICE_ID=$(echo "$DEVICE_ID" | tr -d '[:space:]')
   REGISTRATION_TOKEN=$(echo "$REGISTRATION_TOKEN" | tr -d '[:space:]')
-  cat > .env <<ENVEOF
-SERVER_URL=$SERVER_URL
-DEVICE_ID=$DEVICE_ID
-REGISTRATION_TOKEN=$REGISTRATION_TOKEN
-DISPLAY_PORT=8101
-OPEN_BROWSER=1
-KIOSK=0
-GPS_MODE=sim
-ROUTE=chandigarh,delhi,jaipur,mumbai
-ROUTE_STEPS=8
-ROUTE_DWELL=6
-ENVEOF
+  echo
+  echo "Laptops have no GPS, so this display uses a simulated position."
+  echo "In the demo one display drives a route and the others stay put. Ask the presenter which this one is."
+  read -r -p "Should this display MOVE along a route? [y/N]: " MOVES
+  if [[ "$MOVES" =~ ^[Yy] ]]; then
+    GPS_LINES=$'GPS_MODE=sim\nROUTE=chandigarh,delhi,jaipur,mumbai\nROUTE_STEPS=8\nROUTE_DWELL=6'
+  else
+    read -r -p "Which place is it in? (chandigarh, delhi, jaipur, mumbai, ahmedabad) [delhi]: " PLACE
+    PLACE=$(echo "${PLACE:-delhi}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    GPS_LINES=$'GPS_MODE=fixed\nPLACE='"$PLACE"
+  fi
+  {
+    echo "SERVER_URL=$SERVER_URL"
+    echo "DEVICE_ID=$DEVICE_ID"
+    echo "REGISTRATION_TOKEN=$REGISTRATION_TOKEN"
+    echo "DISPLAY_PORT=8101"
+    echo "OPEN_BROWSER=1"
+    echo "KIOSK=0"
+    echo "$GPS_LINES"
+  } > .env
   echo "Saved to .env (run ./start.sh --reset to change it)."
 fi
 

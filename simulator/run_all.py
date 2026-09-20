@@ -1,6 +1,7 @@
 """Launch several simulated devices (each = a real agent with simulated GPS) and control them from one prompt.
 
-  python run_all.py                 # 3 devices matching the seeded demo data
+  python run_all.py                 # 3 devices matching the seeded demo data:
+                                    #   DEV-001 drives a route, DEV-002 stays in Delhi, DEV-003 stays in Mumbai
   python run_all.py --server http://localhost:8000
 
 Prompt commands:
@@ -24,8 +25,8 @@ AGENT = os.path.join(ROOT, "..", "device", "agent.py")
 DEVICES = [
     # id, registration token, display port, GPS args
     ("DEV-001", "DEMO-REG-001", 8101, ["--route", "chandigarh,delhi,jaipur,mumbai", "--steps", "8", "--dwell", "6"]),
-    ("DEV-002", "DEMO-REG-002", 8102, ["--gps", "fixed", "--lat", "28.6139", "--lng", "77.2090"]),
-    ("DEV-003", "DEMO-REG-003", 8103, ["--route", "mumbai,ahmedabad,delhi", "--steps", "8", "--dwell", "8"]),
+    ("DEV-002", "DEMO-REG-002", 8102, ["--gps", "fixed", "--place", "delhi"]),
+    ("DEV-003", "DEMO-REG-003", 8103, ["--gps", "fixed", "--place", "mumbai"]),
 ]
 
 
