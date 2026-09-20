@@ -1,0 +1,82 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: signage
+      POSTGRES_PASSWORD: signage
+      POSTGRES_DB: signage
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signage"]
+      interval: 3s
+      retries: 20
+
+  minio:
+    image: quay.io/minio/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes: [miniodata:/data]
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://signage:signage@db:5432/signage
+      STORAGE_BACKEND: minio
+      MINIO_ENDPOINT: minio:9000
+      SECRET_KEY: ${SECRET_KEY:-change-me-before-deploying}
+      DEFAULT_ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
+      OFFLINE_THRESHOLD_SECONDS: ${OFFLINE_THRESHOLD_SECONDS:-30}
+      # 1 = seeded devices use DEMO-REG-00x (needed by the `sim` profile); 0 = random tokens printed in the backend log
+      FIXED_DEMO_TOKENS: ${FIXED_DEMO_TOKENS:-1}
+    depends_on:
+      db: { condition: service_healthy }
+      minio: { condition: service_started }  # backend retries until MinIO accepts connections
+    ports: ["${BACKEND_PORT:-8000}:8000"]
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on: [backend]
+    ports: ["${FRONTEND_PORT:-3000}:80"]
+    restart: unless-stopped
+
+  # Optional: 3 simulated devices (each = a full device agent with simulated GPS).
+  #   docker compose --profile sim up
+  # Kiosk displays: http://localhost:8101  8102  8103   (press "d" for demo controls)
+  simulator:
+    profiles: ["sim"]
+    build:
+      context: .
+      dockerfile: simulator/Dockerfile
+    depends_on: [backend]
+    ports: ["8101:8101", "8102:8102", "8103:8103"]
+    restart: unless-stopped
+
+  # Optional public tunnels, so display laptops on other networks can reach the dashboard + device API.
+  # Use ./scripts/tunnel.sh (it starts these, or an SSH-based Pinggy tunnel, and prints the URL).
+  #
+  # Cloudflare quick tunnel: no account; needs outbound port 7844; URL changes when recreated.
+  tunnel:
+    profiles: ["tunnel"]
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --url http://frontend:80
+    depends_on: [frontend]
+    restart: unless-stopped
+
+  # ngrok: free account + authtoken (NGROK_AUTHTOKEN in .env). Set NGROK_DOMAIN to a free static domain
+  # and the URL never changes between restarts.
+  ngrok:
+    profiles: ["ngrok"]
+    image: ngrok/ngrok:latest
+    command: http --log=stdout ${NGROK_DOMAIN:+--url=${NGROK_DOMAIN}} frontend:80
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    depends_on: [frontend]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  miniodata:

@@ -1,0 +1,54 @@
+import { useEffect } from 'react'
+import { CircleMarker, MapContainer, Polygon, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
+import type { Device, Zone } from '../types'
+
+const INDIA: [number, number] = [23.5, 77]
+
+function Fit({ zones, devices }: { zones: Zone[]; devices: Device[] }) {
+  const map = useMap()
+  useEffect(() => {
+    const pts: [number, number][] = [...zones.flatMap((z) => z.polygon), ...devices.filter((d) => d.latitude != null).map((d) => [d.latitude!, d.longitude!] as [number, number])]
+    if (pts.length) map.fitBounds(pts, { padding: [30, 30], maxZoom: 9 })
+    // fit once on first data, not on every live update
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zones.length > 0])
+  return null
+}
+
+function Clicks({ onClick }: { onClick: (p: [number, number]) => void }) {
+  useMapEvents({ click: (e) => onClick([e.latlng.lat, e.latlng.lng]) })
+  return null
+}
+
+export default function MapView({ zones, devices = [], draft, onMapClick, selectedZone, onZoneClick, height = 420 }: {
+  zones: Zone[]; devices?: Device[]; draft?: [number, number][]; onMapClick?: (p: [number, number]) => void
+  selectedZone?: number | null; onZoneClick?: (z: Zone) => void; height?: number
+}) {
+  return (
+    <MapContainer center={INDIA} zoom={5} style={{ height, borderRadius: 12 }} className={onMapClick ? 'cursor-crosshair' : ''}>
+      <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      <Fit zones={zones} devices={devices} />
+      {onMapClick && <Clicks onClick={onMapClick} />}
+      {zones.map((z) => (
+        <Polygon key={z.id} positions={z.polygon} eventHandlers={{ click: () => onZoneClick?.(z) }}
+          pathOptions={{ color: z.color, weight: selectedZone === z.id ? 4 : 2, fillOpacity: selectedZone === z.id ? 0.35 : 0.15 }}>
+          <Tooltip sticky>{z.name} (priority {z.priority})</Tooltip>
+        </Polygon>
+      ))}
+      {draft && draft.length > 0 && (
+        <>
+          <Polyline positions={draft} pathOptions={{ color: '#f59e0b', dashArray: '6' }} />
+          {draft.map((p, i) => <CircleMarker key={i} center={p} radius={5} pathOptions={{ color: '#f59e0b', fillOpacity: 1 }} />)}
+        </>
+      )}
+      {devices.filter((d) => d.latitude != null).map((d) => (
+        <CircleMarker key={d.device_id} center={[d.latitude!, d.longitude!]} radius={9}
+          pathOptions={{ color: '#fff', weight: 2, fillColor: d.status === 'online' ? '#16a34a' : '#dc2626', fillOpacity: 1 }}>
+          <Tooltip direction="top" offset={[0, -8]}>
+            <b>{d.device_id}</b> · {d.name}<br />{d.status} · {d.zone || 'no zone'}<br />{d.current_content || '—'}
+          </Tooltip>
+        </CircleMarker>
+      ))}
+    </MapContainer>
+  )
+}

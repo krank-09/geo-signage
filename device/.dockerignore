@@ -1,0 +1,7 @@
+.env
+.venv
+.cache
+__pycache__
+start.sh
+start.bat
+.ruff_cache

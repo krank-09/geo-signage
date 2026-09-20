@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Signage Display</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: hidden; cursor: none;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body.dev { cursor: default; }
+  #stage { position: fixed; inset: 0; }
+  #stage > * { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity .6s ease; background: #000; }
+  #stage > .show { opacity: 1; }
+  #empty { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column;
+    background: #0f172a; text-align: center; gap: 8px; }
+  #empty h1 { font-size: 4vw; margin: 0; } #empty p { color: #94a3b8; font-size: 1.6vw; margin: 0; }
+  .hud { position: fixed; z-index: 5; font-size: 14px; padding: 6px 12px; border-radius: 999px;
+    background: rgba(15, 23, 42, .72); backdrop-filter: blur(6px); }
+  #status { top: 14px; right: 14px; display: flex; gap: 8px; align-items: center; }
+  #info { left: 14px; bottom: 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+  .off .dot { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+  #emergency { display: none; position: fixed; z-index: 6; inset: 0; border: 10px solid #ef4444; pointer-events: none;
+    animation: blink 1s infinite; }
+  #emergency span { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); background: #ef4444;
+    padding: 6px 18px; border-radius: 999px; font-weight: 700; letter-spacing: .1em; }
+  @keyframes blink { 50% { border-color: transparent; } }
+  #dev { display: none; position: fixed; z-index: 9; top: 60px; right: 14px; width: 250px; padding: 12px; border-radius: 12px;
+    background: rgba(15, 23, 42, .94); font-size: 13px; }
+  #dev h4 { margin: 0 0 8px; } #dev button { margin: 3px 3px 3px 0; padding: 6px 10px; border: 0; border-radius: 6px;
+    background: #334155; color: #fff; cursor: pointer; } #dev button:hover { background: #475569; }
+  #dev .d { background: #b91c1c; } #dev .g { background: #15803d; } #dev small { color: #94a3b8; display: block; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="empty"><h1 id="e-id">Waiting for content</h1><p>No content is assigned to this display yet.</p></div>
+<div id="emergency"><span>EMERGENCY</span></div>
+<div class="hud" id="status"><span class="dot"></span><span id="status-text">connecting</span></div>
+<div class="hud" id="info"></div>
+<div id="dev">
+  <h4>Demo controls</h4>
+  <button class="d" onclick="ctl({offline:true})">Cut network</button>
+  <button class="g" onclick="ctl({offline:false})">Restore network</button>
+  <div style="margin-top:8px">Jump GPS to:</div>
+  <button onclick="ctl({goto:'chandigarh'})">Chandigarh</button><button onclick="ctl({goto:'delhi'})">Delhi</button>
+  <button onclick="ctl({goto:'jaipur'})">Jaipur</button><button onclick="ctl({goto:'mumbai'})">Mumbai</button>
+  <div style="margin-top:8px"><button onclick="ctl({moving:true})">Resume route</button><button onclick="ctl({moving:false})">Pause</button></div>
+  <small id="dev-pos"></small>
+</div>
+<script>
+const stage = document.getElementById('stage');
+let state = null, signature = '', idx = 0, timer = null, current = null, epoch = 0;
+
+async function ctl(body) {
+  await fetch('/api/control', { method: 'POST', body: JSON.stringify(body) }); poll();
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'd') { const d = document.getElementById('dev'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; document.body.classList.toggle('dev'); }
+});
+
+function impression(item, startedAt) {
+  const dur = (Date.now() - startedAt) / 1000;
+  if (dur < 0.5) return;
+  fetch('/api/impression', { method: 'POST', body: JSON.stringify({ content_id: item.content_id, duration: dur, started_at: new Date(startedAt).toISOString() }) }).catch(() => {});
+}
+
+function clearPlayback() { clearTimeout(timer); timer = null; epoch++; }
+
+function playNext(myEpoch) {
+  if (myEpoch !== epoch || !state || !state.items.length) return;
+  const items = state.items;
+  idx = idx % items.length;
+  const item = items[idx];
+  const fit = state.config.fit === 'cover' ? 'cover' : 'contain';
+  const startedAt = Date.now();
+  let el;
+  const advance = () => { if (myEpoch !== epoch) return; impression(item, startedAt); idx++; playNext(myEpoch); };
+  if (item.type === 'video') {
+    el = document.createElement('video');
+    el.src = item.src; el.autoplay = true; el.muted = state.config.mute !== false; el.playsInline = true;
+    el.onended = advance; el.onerror = () => { timer = setTimeout(advance, 1500); };
+    if (items.length === 1) el.loop = true;
+  } else {
+    el = document.createElement('img');
+    el.src = item.src; el.onerror = () => { timer = setTimeout(advance, 1500); };
+    timer = setTimeout(advance, Math.max(item.duration, 1) * 1000);
+  }
+  el.style.objectFit = fit;
+  stage.appendChild(el);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+  const old = current; current = el;
+  if (old) { old.classList.remove('show'); setTimeout(() => old.remove(), 700); }
+  if (item.type === 'video' && items.length === 1) el.play().catch(() => {});
+}
+
+function render() {
+  const s = state;
+  document.getElementById('empty').style.display = s.items.length ? 'none' : 'flex';
+  document.getElementById('e-id').textContent = s.device_id + ' - waiting for content';
+  document.getElementById('emergency').style.display = s.emergency ? 'block' : 'none';
+  const st = document.getElementById('status');
+  st.classList.toggle('off', !s.online);
+  document.getElementById('status-text').textContent = s.online
+    ? 'ONLINE' + (s.ws ? ' - live' : '') : 'OFFLINE - playing cached content';
+  document.getElementById('info').textContent =
+    `${s.device_id}  |  ${s.reason || (s.zone ? s.zone.name : 'no zone')}` + (s.pending_impressions ? `  |  ${s.pending_impressions} queued` : '');
+  document.getElementById('dev-pos').textContent = s.position
+    ? `GPS ${s.position[0].toFixed(4)}, ${s.position[1].toFixed(4)}${s.moving === false ? ' (paused)' : ''}` : 'No GPS fix';
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/api/state', { cache: 'no-store' });
+    state = await r.json();
+  } catch (e) { return; } // local agent hiccup: keep whatever is playing
+  render();
+  const sig = state.manifest_version + '|' + state.items.map(i => i.src).join(',') + '|' + state.config.fit + '|' + state.config.mute;
+  if (sig !== signature) {
+    signature = sig; idx = 0; clearPlayback();
+    if (state.items.length) playNext(epoch);
+    else if (current) { current.remove(); current = null; }
+  } else if (!timer && !current && state.items.length) { playNext(epoch); }
+}
+poll(); setInterval(poll, 1000);
+</script>
+</body>
+</html>
