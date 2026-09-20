@@ -33,10 +33,10 @@ async def monitor_loop() -> None:
         try:
             result = await asyncio.to_thread(sweep_offline)
             for dev in result["devices"]:
-                await hub.to_admins({"event": "device_update", "device": dev})
+                await hub.to_admins({"event": "device_update", "client_id": dev["client_id"], "device": dev}, dev["client_id"])
             for alert in result["raised"]:
-                await hub.to_admins({"event": "alert", "alert": alert})
+                await hub.to_admins({"event": "alert", "client_id": alert["client_id"], "alert": alert}, alert["client_id"])
             for alert in result["resolved"]:
-                await hub.to_admins({"event": "alert_resolved", "alert": alert})
+                await hub.to_admins({"event": "alert_resolved", "client_id": alert["client_id"], "alert": alert}, alert["client_id"])
         except Exception:
             log.exception("offline monitor failed")

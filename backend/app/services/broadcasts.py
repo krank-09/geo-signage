@@ -30,7 +30,7 @@ def targets(b: Broadcast, device: Device, zone_ids: set[int]) -> bool:
 
 def active_for_device(db: Session, device: Device, zone_ids: set[int], now: datetime | None = None) -> list[dict]:
     now = now or datetime.now(timezone.utc)
-    rows = [b for b in db.query(Broadcast).filter(Broadcast.ended_at.is_(None)).order_by(Broadcast.id)
+    rows = [b for b in db.query(Broadcast).filter(Broadcast.ended_at.is_(None), Broadcast.client_id == device.client_id).order_by(Broadcast.id)
             if is_active(b, now) and targets(b, device, zone_ids)]
     return [{"id": b.id, "message": b.message, "style": b.style, "severity": b.severity,
              "remaining_seconds": remaining_seconds(b, now)} for b in rows]

@@ -44,15 +44,18 @@ def health(device: Device, now: datetime | None = None) -> tuple[int, list[str]]
     return max(0, round(score)), reasons
 
 
-def alert_threshold(db: Session) -> int:
+def alert_threshold(db: Session, client_id: int | None = None) -> int:
+    """A client's own threshold if it set one, otherwise the platform default."""
+    default = get_setting(db, "health_alert_threshold", str(config.HEALTH_ALERT_THRESHOLD))
+    raw = get_setting(db, f"health_alert_threshold:{client_id}", default) if client_id is not None else default
     try:
-        return max(0, min(100, int(get_setting(db, "health_alert_threshold", str(config.HEALTH_ALERT_THRESHOLD)))))
+        return max(0, min(100, int(raw)))
     except ValueError:
         return config.HEALTH_ALERT_THRESHOLD
 
 
 def serialize_alert(a: Alert) -> dict:
-    return {"id": a.id, "device_id": a.device_id, "kind": a.kind, "message": a.message, "health": a.health,
+    return {"id": a.id, "client_id": a.client_id, "device_id": a.device_id, "kind": a.kind, "message": a.message, "health": a.health,
             "created_at": a.created_at, "resolved_at": a.resolved_at,
             "acknowledged_at": a.acknowledged_at, "acknowledged_by": a.acknowledged_by}
 
@@ -60,16 +63,19 @@ def serialize_alert(a: Alert) -> dict:
 def evaluate_alerts(db: Session, now: datetime | None = None) -> dict[str, list[dict]]:
     """Raise an alert for each device below the threshold and resolve the ones that recovered.
     Devices that have never connected are skipped (they are not 'dropping', they are not deployed yet)."""
-    threshold = alert_threshold(db)
-    open_alerts = {a.device_id: a for a in db.query(Alert).filter(Alert.resolved_at.is_(None))}
+    thresholds: dict[int | None, int] = {}
+    open_alerts = {a.device_id: a for a in db.query(Alert).filter(Alert.resolved_at.is_(None), Alert.kind != "tamper")}
     raised, resolved = [], []
     for d in db.query(Device).filter(Device.last_seen.is_not(None)).all():
         score, reasons = health(d, now)
+        if d.client_id not in thresholds:
+            thresholds[d.client_id] = alert_threshold(db, d.client_id)
+        threshold = thresholds[d.client_id]
         current = open_alerts.get(d.device_id)
         if score < threshold and current is None:
             kind = "offline" if reasons == ["Offline"] else "health_low"
             detail = ", ".join(reasons) or "below threshold"
-            alert = Alert(device_id=d.device_id, kind=kind, health=score,
+            alert = Alert(client_id=d.client_id, device_id=d.device_id, kind=kind, health=score,
                           message=f"{d.name} ({d.device_id}) health {score}%, below {threshold}%: {detail}")
             db.add(alert)
             db.add(DeviceLog(device_id=d.device_id, kind="alert", message=f"Health alert: {score}% ({detail})"))

@@ -20,12 +20,26 @@ class FirebaseLoginIn(BaseModel):
 
 class RoleIn(BaseModel):
     role: Literal["admin", "viewer", "pending"]
+    client_id: int | None = None      # platform admins only: move the person into a client (omit to leave it unchanged)
+
+
+class ClientIn(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    device_limit: int | None = Field(None, ge=1, le=100000)
+
+
+class ClientUpdate(BaseModel):
+    name: str | None = Field(None, min_length=2, max_length=100)
+    active: bool | None = None
+    device_limit: int | None = Field(None, ge=1, le=100000)
+    clear_device_limit: bool = False
 
 
 class UserIn(BaseModel):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
     password: str = Field(min_length=8, max_length=128)
     role: Literal["admin", "viewer"] = "admin"
+    client_id: int | None = None      # platform admins only; a client admin's new users always join their own client
 
 
 class PasswordChangeIn(BaseModel):
@@ -40,6 +54,7 @@ class AnnounceIn(BaseModel):
     longitude: float | None = Field(None, ge=-180, le=180)
     connection_type: ConnectionType | None = None
     software_version: str | None = Field(None, max_length=32)
+    enrollment_key: str | None = Field(None, max_length=64)   # ties the display to one client; without it it is unassigned
 
 
 class HealthSettingIn(BaseModel):

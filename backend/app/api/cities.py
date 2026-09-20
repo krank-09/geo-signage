@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import User, Zone
 from ..schemas import CityZoneIn
-from ..security import current_user, require_admin
+from ..scope import Scope, get_scope, scoped, write_scope
+from ..security import current_user
 from ..services import cities
 from ..services.zone_service import relocate_devices
 from .zones import _out as zone_out
@@ -21,9 +22,9 @@ def _get(city_id: str) -> dict:
 
 
 @router.get("")
-def list_cities(q: str = "", db: Session = Depends(get_db), _: User = Depends(current_user)):
-    """All cities (optionally filtered by name or state), flagged with whether a zone for them already exists."""
-    existing = {z.name for z in db.query(Zone)}
+def list_cities(q: str = "", db: Session = Depends(get_db), scope: Scope = Depends(get_scope)):
+    """All cities (optionally filtered by name or state), flagged with whether this client already has a zone for them."""
+    existing = {z.name for z in scoped(db.query(Zone), Zone, scope)}
     needle = q.strip().lower()
     return [
         {**cities.summary(c), "zone_exists": f"{c['name']} Zone" in existing}
@@ -38,13 +39,13 @@ def get_city(city_id: str, _: User = Depends(current_user)):
 
 
 @router.post("/{city_id}/zone", status_code=201)
-def create_zone_from_city(city_id: str, body: CityZoneIn, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def create_zone_from_city(city_id: str, body: CityZoneIn, db: Session = Depends(get_db), scope: Scope = Depends(write_scope)):
     c = _get(city_id)
     name = body.name or f"{c['name']} Zone"
-    if db.query(Zone).filter(Zone.name == name).first():
+    if db.query(Zone).filter(Zone.name == name, Zone.client_id == scope.client_id).first():
         raise HTTPException(409, f"A zone named '{name}' already exists")
-    zone = Zone(name=name, polygon=c["polygon"], priority=body.priority, color=body.color)
+    zone = Zone(client_id=scope.client_id, name=name, polygon=c["polygon"], priority=body.priority, color=body.color)
     db.add(zone)
     db.commit()
-    relocate_devices(db)
+    relocate_devices(db, scope.client_id)
     return zone_out(zone)

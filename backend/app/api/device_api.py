@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from .. import config
 from ..database import get_db
-from ..models import Content, Device, Impression, Zone, utcnow
+from ..models import Client, Content, Device, Impression, Zone, utcnow
 from ..schemas import HeartbeatIn, ImpressionsIn, LocationIn, RegisterIn
 from ..security import create_device_token, current_device, verify_secret
 from ..services import broadcasts as live
@@ -49,6 +49,9 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
     # Same error for unknown device / bad token so IDs cannot be enumerated.
     if not device or not verify_secret(body.registration_token, device.registration_token_hash):
         raise HTTPException(401, "Invalid device ID or registration token")
+    client = db.get(Client, device.client_id) if device.client_id is not None else None
+    if client is not None and not client.active:
+        raise HTTPException(403, "This client account is suspended")
     device.registered_at = utcnow()
     device.token_version += 1  # a re-registration invalidates older credentials
     if body.software_version:
@@ -73,7 +76,7 @@ def heartbeat(body: HeartbeatIn, db: Session = Depends(get_db), device: Device =
     if body.content_version is not None:
         device.current_content_version = body.content_version
         device.current_content_names = (body.content_names or "")[:500]
-    zones = db.query(Zone).all()
+    zones = db.query(Zone).filter(Zone.client_id == device.client_id).all()
     if body.latitude is not None and body.longitude is not None:
         update_location(db, device, body.latitude, body.longitude, zones)
     db.commit()
@@ -87,7 +90,7 @@ def location(body: LocationIn, db: Session = Depends(get_db), device: Device = D
         raise HTTPException(403, "Token does not belong to this device")
     touch(db, device)
     device.gps_ok = True
-    zones = db.query(Zone).all()
+    zones = db.query(Zone).filter(Zone.client_id == device.client_id).all()
     update_location(db, device, body.latitude, body.longitude, zones)
     db.commit()
     broadcast_device(device)
@@ -119,7 +122,10 @@ def content(device_id: str, db: Session = Depends(get_db), device: Device = Depe
 def media(device_id: str, content_id: int, request: Request, db: Session = Depends(get_db),
           device: Device = Depends(current_device)):
     _own(device, device_id)
-    return stream_content(get_or_404(db, Content, content_id, "Content"), request)
+    c = get_or_404(db, Content, content_id, "Content")
+    if c.client_id != device.client_id:
+        raise HTTPException(404, "Content not found")     # never serve another client's files, whatever the id
+    return stream_content(c, request)
 
 
 @router.post("/impressions")

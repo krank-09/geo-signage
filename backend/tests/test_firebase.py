@@ -86,7 +86,7 @@ def test_allow_listed_email_becomes_admin(client):
     body = r.json()
     assert body["role"] == "admin" and body["username"] == "boss"
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {body['access_token']}"}).json()
-    assert me == {"username": "boss", "role": "admin"}
+    assert me["username"] == "boss" and me["role"] == "admin" and me["platform"] is True   # an allow-listed email is a platform admin
     assert exchange(client, token(uid="uid-boss", email="boss@example.com")).json()["username"] == "boss"   # same account again
 
 

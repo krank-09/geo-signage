@@ -47,11 +47,22 @@ def announce(secret: str, info: dict) -> dict:
     return {"claimed": False}
 
 
-def list_agents() -> list[dict]:
+def list_agents(client_id: int | None = None, include_unassigned: bool = True, everything: bool = False) -> list[dict]:
+    """Announcing agents visible to a caller: those of `client_id` (plus, for platform users, the unassigned pool)."""
     now = time.time()
     with _lock:
         _prune(now)
-        return [{**a, "seconds_ago": round(now - a["last_seen"])} for a in sorted(_agents.values(), key=lambda a: a["name"].lower())]
+        rows = sorted(_agents.values(), key=lambda a: a["name"].lower())
+        if not everything:
+            rows = [a for a in rows if a.get("client_id") == client_id or (include_unassigned and a.get("client_id") is None and client_id is None)]
+        return [{**a, "seconds_ago": round(now - a["last_seen"])} for a in rows]
+
+
+def get(pid: str) -> dict | None:
+    with _lock:
+        _prune(time.time())
+        entry = _agents.get(pid)
+        return dict(entry) if entry else None
 
 
 def is_listed(pid: str) -> bool:

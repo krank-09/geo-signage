@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from . import config
 from .database import get_db
-from .models import Device, User
+from .models import Client, Device, User
 
 _ph = PasswordHasher()
 ALGO = "HS256"
@@ -66,6 +66,10 @@ def user_from_token(token: str | None, db: Session) -> User:
         raise unauthorized
     if user.role == "pending":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Your account is waiting for an administrator's approval")
+    if user.client_id is not None:
+        client = db.get(Client, user.client_id)
+        if client is None or not client.active:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "This client account is suspended")
     return user
 
 
@@ -82,6 +86,10 @@ def device_from_token(token: str | None, db: Session) -> Device:
     device = db.query(Device).filter(Device.device_id == payload.get("sub")).first()
     if not device or device.token_version != payload.get("ver"):
         raise unauthorized
+    if device.client_id is not None:
+        client = db.get(Client, device.client_id)
+        if client is None or not client.active:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "This client account is suspended")
     return device
 
 

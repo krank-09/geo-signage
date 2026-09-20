@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -8,6 +8,19 @@ from .database import Base
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class Client(Base):
+    """A customer of the platform. Everything below (devices, content, zones, ...) belongs to exactly one client."""
+
+    __tablename__ = "clients"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    slug: Mapped[str] = mapped_column(String(100), unique=True)
+    enrollment_key: Mapped[str] = mapped_column(String(64), unique=True)  # lets a display announce itself to this client only
+    active: Mapped[bool] = mapped_column(Boolean, default=True)  # a suspended client's users and devices are locked out
+    device_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None = unlimited
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class User(Base):
@@ -18,23 +31,29 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(16), default="admin")  # admin | viewer | pending (awaiting approval)
     email: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     firebase_uid: Mapped[str | None] = mapped_column(String(128), unique=True, index=True, nullable=True)
+    # NULL = platform user (sees and manages every client); set = belongs to that client only
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class DeviceGroup(Base):
     __tablename__ = "device_groups"
+    __table_args__ = (Index("uq_groups_client_name", "client_id", "name", unique=True),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(100))
 
 
 class Content(Base):
     __tablename__ = "content"
     id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(200))
     type: Mapped[str] = mapped_column(String(16))  # image | video
     storage_key: Mapped[str] = mapped_column(String(255))
     mime: Mapped[str] = mapped_column(String(64))
     size: Mapped[int] = mapped_column(Integer, default=0)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)  # lets displays verify what they download and cache
     duration: Mapped[int] = mapped_column(Integer, default=10)  # seconds on screen (images)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -43,8 +62,10 @@ class Content(Base):
 
 class Zone(Base):
     __tablename__ = "zones"
+    __table_args__ = (Index("uq_zones_client_name", "client_id", "name", unique=True),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(100))
     polygon: Mapped[list] = mapped_column(JSON)  # [[lat, lng], ...]
     priority: Mapped[int] = mapped_column(Integer, default=0)
     color: Mapped[str] = mapped_column(String(16), default="#3b82f6")
@@ -59,6 +80,7 @@ class Assignment(Base):
 
     __tablename__ = "assignments"
     id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
     content_id: Mapped[int] = mapped_column(ForeignKey("content.id", ondelete="CASCADE"))
     zone_id: Mapped[int | None] = mapped_column(ForeignKey("zones.id", ondelete="CASCADE"), nullable=True)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("device_groups.id", ondelete="CASCADE"), nullable=True)
@@ -78,6 +100,7 @@ class Device(Base):
     __tablename__ = "devices"
     id: Mapped[int] = mapped_column(primary_key=True)
     device_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(100))
     group_id: Mapped[int | None] = mapped_column(ForeignKey("device_groups.id", ondelete="SET NULL"), nullable=True)
     registration_token_hash: Mapped[str] = mapped_column(String(255))
@@ -99,6 +122,23 @@ class Device(Base):
     gps_ok: Mapped[bool] = mapped_column(Boolean, default=False)
     config: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # fleet inventory, reported by the agent (software_version above is the agent version)
+    os_name: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    os_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    os_arch: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    runtime_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    capabilities: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # tamper-proofing
+    public_key: Mapped[str | None] = mapped_column(String(64), nullable=True)      # base64 Ed25519 key bound at registration
+    key_bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    hw_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)  # hash of the machine's identity, bound at registration
+    code_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)       # latest hash of the agent's own code
+    code_baseline: Mapped[str | None] = mapped_column(String(64), nullable=True)   # first hash seen for this device
+    tamper_state: Mapped[str | None] = mapped_column(String(12), nullable=True)    # None/"ok" | "flagged"
+    tamper_flagged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    boot_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    restarts: Mapped[list | None] = mapped_column(JSON, nullable=True)            # recent agent start times (epoch seconds)
 
     group: Mapped[DeviceGroup | None] = relationship(lazy="joined")
     current_zone: Mapped[Zone | None] = relationship(lazy="joined")
@@ -128,6 +168,7 @@ class Broadcast(Base):
 
     __tablename__ = "broadcasts"
     id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
     message: Mapped[str] = mapped_column(Text)
     style: Mapped[str] = mapped_column(String(12), default="ticker")  # ticker | banner | fullscreen
     severity: Mapped[str] = mapped_column(String(12), default="info")  # info | warning | critical
@@ -148,8 +189,9 @@ class Alert(Base):
 
     __tablename__ = "alerts"
     id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
     device_id: Mapped[str] = mapped_column(String(64), index=True)
-    kind: Mapped[str] = mapped_column(String(16))  # offline | health_low
+    kind: Mapped[str] = mapped_column(String(16))  # offline | health_low | tamper
     message: Mapped[str] = mapped_column(Text)
     health: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
@@ -162,3 +204,31 @@ class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(Text, default="")
+
+
+class AgentRelease(Base):
+    """A trusted build of the display agent: version + the hash of its code. Platform-managed."""
+
+    __tablename__ = "agent_releases"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version: Mapped[str] = mapped_column(String(32), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    note: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TamperEvent(Base):
+    """Append-only, hash-chained record of tampering signals. Each row's hash covers the previous row of the same client,
+    so deleting or editing history is detectable (see services/tamper.verify_chain)."""
+
+    __tablename__ = "tamper_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    device_id: Mapped[str] = mapped_column(String(64), index=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    severity: Mapped[str] = mapped_column(String(12), default="critical")  # warning | critical
+    source: Mapped[str] = mapped_column(String(10), default="server")      # device | server | admin
+    detail: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    prev_hash: Mapped[str] = mapped_column(String(64), default="")
+    hash: Mapped[str] = mapped_column(String(64), default="")

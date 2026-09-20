@@ -1,4 +1,5 @@
 """First-run seed: admin user + demo devices, city zones and generated media."""
+import hashlib
 import logging
 import os
 import secrets
@@ -9,7 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy.orm import Session
 
 from . import config
-from .models import Assignment, Content, Device, DeviceGroup, User, Zone
+from .models import Assignment, Client, Content, Device, DeviceGroup, User, Zone
 from .security import hash_secret
 from .services.device_service import DEFAULT_CONFIG
 from .storage import get_storage
@@ -64,15 +65,17 @@ def make_slide(title: str, subtitle: str, c1, c2) -> str:
     return path
 
 
-def _add_content(db: Session, name: str, title: str, sub: str, c1, c2, duration=8) -> Content:
+def _add_content(db: Session, cid: int, name: str, title: str, sub: str, c1, c2, duration=8) -> Content:
     path = make_slide(title, sub, c1, c2)
     key = f"{uuid.uuid4().hex}.png"
     try:
+        with open(path, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()   # hashed before the temp file goes away
         get_storage().put(key, path, "image/png")
         size = os.path.getsize(path)
     finally:
         os.remove(path)
-    c = Content(name=name, type="image", storage_key=key, mime="image/png", size=size, duration=duration)
+    c = Content(client_id=cid, name=name, type="image", storage_key=key, mime="image/png", size=size, sha256=digest, duration=duration)
     db.add(c)
     db.flush()
     return c
@@ -87,24 +90,25 @@ def seed(db: Session) -> None:
     if not config.SEED_DEMO_DATA or db.query(Device).first() or db.query(Zone).first():
         return
 
-    north = DeviceGroup(name="North India")
-    west = DeviceGroup(name="West India")
+    cid = db.query(Client).order_by(Client.id).first().id   # ensure_default_client() has run
+    north = DeviceGroup(name="North India", client_id=cid)
+    west = DeviceGroup(name="West India", client_id=cid)
     db.add_all([north, west])
     db.flush()
 
     zones = {}
     for name, center, radius, color, _ in CITIES:
-        z = Zone(name=f"{name} Zone", polygon=circle(center, radius), priority=10, color=color)
+        z = Zone(client_id=cid, name=f"{name} Zone", polygon=circle(center, radius), priority=10, color=color)
         db.add(z)
         zones[name] = z
     db.flush()
 
-    welcome = _add_content(db, "Welcome (default)", "Welcome", "Geo Signage - default content", (30, 41, 59), (100, 116, 139), 8)
-    db.add(Assignment(content_id=welcome.id, priority=0))
+    welcome = _add_content(db, cid, "Welcome (default)", "Welcome", "Geo Signage - default content", (30, 41, 59), (100, 116, 139), 8)
+    db.add(Assignment(client_id=cid, content_id=welcome.id, priority=0))
     for name, _, _, _, (c1, c2) in CITIES:
-        c = _add_content(db, f"{name} Advertisement", name, f"Advertisement for {name}", c1, c2)
-        db.add(Assignment(content_id=c.id, zone_id=zones[name].id, priority=10))
-    _add_content(db, "EMERGENCY ALERT", "ALERT", "Please follow official instructions", (127, 29, 29), (239, 68, 68), 6)
+        c = _add_content(db, cid, f"{name} Advertisement", name, f"Advertisement for {name}", c1, c2)
+        db.add(Assignment(client_id=cid, content_id=c.id, zone_id=zones[name].id, priority=10))
+    _add_content(db, cid, "EMERGENCY ALERT", "ALERT", "Please follow official instructions", (127, 29, 29), (239, 68, 68), 6)
 
     devices = [  # id, name, group, registration token, connection type
         ("DEV-001", "Roadshow Van", north, "DEMO-REG-001", "cellular_4g"),
@@ -115,7 +119,7 @@ def seed(db: Session) -> None:
         if not config.FIXED_DEMO_TOKENS:
             token = "-".join(secrets.token_hex(2).upper() for _ in range(3))
             log.warning("Registration token for %s: %s", did, token)  # shown once; rotate in the dashboard if lost
-        db.add(Device(device_id=did, name=name, group_id=group.id, registration_token_hash=hash_secret(token),
+        db.add(Device(device_id=did, client_id=cid, name=name, group_id=group.id, registration_token_hash=hash_secret(token),
                       connection_type=connection, config=dict(DEFAULT_CONFIG)))
     db.commit()
     log.info("Seeded demo data (3 devices, 3 zones, 5 content items)")

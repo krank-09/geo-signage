@@ -1,3 +1,4 @@
+import hashlib
 import os
 import tempfile
 import uuid
@@ -27,6 +28,7 @@ async def save_upload(file: UploadFile) -> dict:
     limit = config.MAX_UPLOAD_MB * 1024 * 1024
     size = 0
     head = b""
+    digest = hashlib.sha256()
     fd, tmp = tempfile.mkstemp(suffix=ext)
     try:
         with os.fdopen(fd, "wb") as out:
@@ -34,6 +36,7 @@ async def save_upload(file: UploadFile) -> dict:
                 if not head:
                     head = chunk[:16]
                 size += len(chunk)
+                digest.update(chunk)
                 if size > limit:
                     raise HTTPException(413, f"File exceeds {config.MAX_UPLOAD_MB} MB limit")
                 out.write(chunk)
@@ -43,7 +46,7 @@ async def save_upload(file: UploadFile) -> dict:
         get_storage().put(key, tmp, mime)
     finally:
         os.remove(tmp)
-    return {"key": key, "type": kind, "mime": mime, "size": size}
+    return {"key": key, "type": kind, "mime": mime, "size": size, "sha256": digest.hexdigest()}
 
 
 def stream_content(content: Content, request: Request) -> Response:
@@ -77,3 +80,16 @@ def stream_content(content: Content, request: Request) -> Response:
     if status == 206:
         headers["Content-Range"] = f"bytes {start}-{end}/{total}"
     return StreamingResponse(storage.read(content.storage_key, start, length), status_code=status, media_type=content.mime, headers=headers)
+
+
+def ensure_hash(db, content: Content) -> str:
+    """SHA-256 of a stored file. Content uploaded before hashing existed is hashed once, on first use, and remembered."""
+    if content.sha256:
+        return content.sha256
+    storage, digest = get_storage(), hashlib.sha256()
+    total = storage.size(content.storage_key)
+    for chunk in storage.read(content.storage_key, 0, total):
+        digest.update(chunk)
+    content.sha256 = digest.hexdigest()
+    db.commit()
+    return content.sha256

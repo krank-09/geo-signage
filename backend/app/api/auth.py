@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from .. import config
 from ..database import get_db
-from ..models import User
+from ..models import Client, User
 from ..schemas import FirebaseLoginIn, LoginIn
 from ..security import create_admin_token, current_user, verify_secret
 from ..services import firebase
@@ -23,8 +23,14 @@ def _throttled(username: str) -> bool:
     return len(recent) >= MAX_FAILS
 
 
-def _session(user: User) -> dict:
-    return {"access_token": create_admin_token(user), "token_type": "bearer", "username": user.username, "role": user.role}
+def _identity(user: User, db: Session) -> dict:
+    client = db.get(Client, user.client_id) if user.client_id is not None else None
+    return {"username": user.username, "role": user.role, "platform": user.client_id is None,
+            "client_id": user.client_id, "client_name": client.name if client else None}
+
+
+def _session(user: User, db: Session) -> dict:
+    return {"access_token": create_admin_token(user), "token_type": "bearer", **_identity(user, db)}
 
 
 @router.get("/config")
@@ -82,7 +88,7 @@ def firebase_login(body: FirebaseLoginIn, db: Session = Depends(get_db)):
         user.email = claims["email"]
         db.commit()
     if user.role == "admin" or user.role == "viewer":
-        return _session(user)
+        return _session(user, db)
     raise HTTPException(403, "Your account is waiting for an administrator's approval")
 
 
@@ -95,7 +101,7 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
         _failures.setdefault(body.username, []).append(time.time())
         raise HTTPException(401, "Invalid username or password")
     _failures.pop(body.username, None)
-    return _session(user)
+    return _session(user, db)
 
 
 @router.post("/logout")
@@ -105,5 +111,5 @@ def logout(_: User = Depends(current_user)):
 
 
 @router.get("/me")
-def me(user: User = Depends(current_user)):
-    return {"username": user.username, "role": user.role}
+def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return _identity(user, db)

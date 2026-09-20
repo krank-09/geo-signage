@@ -37,12 +37,13 @@ def in_window(start: str | None, end: str | None, now: datetime | None = None) -
 
 
 def resolve(db: Session, device: Device, now: datetime | None = None, zones: list[Zone] | None = None) -> dict:
-    hits = zones_containing(device.latitude, device.longitude, db.query(Zone).all() if zones is None else zones)
+    hits = zones_containing(device.latitude, device.longitude,
+                            db.query(Zone).filter(Zone.client_id == device.client_id).all() if zones is None else zones)
     zone_ids = {z.id for z in hits}
     primary = hits[0] if hits else None
 
     candidates = []
-    for a in db.query(Assignment).filter(Assignment.active.is_(True)).all():
+    for a in db.query(Assignment).filter(Assignment.active.is_(True), Assignment.client_id == device.client_id).all():
         if a.zone_id is not None and a.zone_id not in zone_ids:
             continue
         if a.group_id is not None and a.group_id != device.group_id:

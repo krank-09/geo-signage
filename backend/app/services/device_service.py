@@ -32,6 +32,7 @@ def serialize(device: Device) -> dict:
     return {
         "id": device.id,
         "device_id": device.device_id,
+        "client_id": device.client_id,
         "name": device.name,
         "status": "online" if is_online(device) else "offline",
         "registered": device.registered_at is not None,
@@ -73,7 +74,7 @@ def touch(db: Session, device: Device) -> None:
 def update_location(db: Session, device: Device, lat: float, lng: float, zones: list[Zone] | None = None) -> None:
     """Store the position and refresh which zone the device is in. Pass `zones` to reuse an already loaded list."""
     device.latitude, device.longitude = lat, lng
-    hits = zones_containing(lat, lng, db.query(Zone).all() if zones is None else zones)
+    hits = zones_containing(lat, lng, db.query(Zone).filter(Zone.client_id == device.client_id).all() if zones is None else zones)
     new_zone = hits[0] if hits else None
     old_id = device.current_zone_id
     new_id = new_zone.id if new_zone else None
@@ -84,4 +85,4 @@ def update_location(db: Session, device: Device, lat: float, lng: float, zones: 
 
 
 def broadcast_device(device: Device) -> None:
-    notify_admins("device_update", device=serialize(device))
+    notify_admins("device_update", device.client_id, device=serialize(device))
