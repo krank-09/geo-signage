@@ -9,15 +9,17 @@ Run:  python agent.py --server http://localhost:8000 --device-id DEV-001 --token
 
 Every option can also come from environment variables or a `.env` file next to this script
 (SERVER_URL, DEVICE_ID, REGISTRATION_TOKEN, DISPLAY_PORT, GPS_MODE, PLACE, ROUTE, ROUTE_STEPS, ROUTE_DWELL, LAT, LNG,
-OPEN_BROWSER, KIOSK) - see .env.example. `./start.sh` / `start.bat` wrap all of this for display laptops.
+OPEN_BROWSER, KIOSK, DEMO_CONTROLS, DISPLAY_BIND) - see .env.example. `./start.sh` / `start.bat` wrap all of this for display laptops.
 """
 import argparse
 import json
 import logging
 import os
+import secrets
 import threading
 import time
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import psutil
 import requests
@@ -27,8 +29,13 @@ from cache import Cache
 from discovery import discover, load_identity
 from display_server import make_server
 from gps import FixedGPS, GpsdGPS, SimulatedGPS, place_coords
+from identity import Identity, code_hash, file_sha256, hw_fingerprint, system_info, verify_manifest
 
-VERSION = "1.1.0"
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION"), encoding="utf-8") as _f:
+    VERSION = _f.read().strip()
+CAPABILITIES = ["signed-requests", "signed-manifests", "media-hash", "state-mac", "tamper-report"]
+CLOCK_ROLLBACK_SECONDS = 120
+VERIFY_EVERY = 60
 log = logging.getLogger("agent")
 
 
@@ -42,11 +49,25 @@ class DeviceAgent:
         self.device_id = device_id
         self.reg_token = reg_token
         self.gps = gps
-        self.cache = Cache(cache_dir)
+        self.lock = threading.RLock()
+        self.hb_event = threading.Event()  # wake heartbeat early (e.g. right after a content change)
+        self.identity = Identity(cache_dir)
+        self._code_hash = code_hash()
+        self.cache = Cache(cache_dir, identity=self.identity)
         self.poll_interval = poll_interval
+        self.boot_id = secrets.token_hex(8)
+        self.control_token = os.getenv("CONTROL_TOKEN") or secrets.token_urlsafe(24)   # protects /api/control on this machine
+        self.demo_controls = os.getenv("DEMO_CONTROLS", "").strip().lower() in ("1", "true", "yes", "on")
+        self.tamper_queue: list[dict] = []
+        self._tamper_seen: dict[str, float] = {}
 
         state = self.cache.load_state()
         self.token = state.get("token")
+        self.server_key = state.get("server_key")      # pinned at first registration
+        self.tamper_queue = state.get("tamper_queue") or []
+        if self.cache.state_tampered:
+            self.report_tamper("config_tampered", "Saved state failed its integrity check; starting clean")
+        self._check_restart(state)
         self.manifest = state.get("manifest") or {"manifest_version": None, "items": [], "zone": None}
         self.config = state.get("config") or {"heartbeat_interval": 10, "location_interval": 3, "mute": True, "fit": "contain"}
 
@@ -58,17 +79,73 @@ class DeviceAgent:
         self.server_manifest_version = self.manifest.get("manifest_version")
         self.broadcasts: list[dict] = []  # live announcements; each has a local `deadline` (None = until ended)
         self.impressions: list[dict] = []
-        self.lock = threading.RLock()
         self.sync_event = threading.Event()
-        self.hb_event = threading.Event()  # wake heartbeat early (e.g. right after a content change)
         self.stop = threading.Event()
         self.http = requests.Session()
         self.http.headers["ngrok-skip-browser-warning"] = "1"  # harmless elsewhere; avoids ngrok's browser notice
         self.reg_lock = threading.Lock()  # registration rotates credentials, so only one thread may do it at a time
 
     # ------------------------------------------------------------------ network helpers
-    def _headers(self):
-        return {"Authorization": f"Bearer {self.token}"} if self.token else {}
+    def _headers(self, method="GET", path="", body=b""):
+        h = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        return {**h, **self.identity.sign_headers(method, path, body)}
+
+    # ------------------------------------------------------------------ tamper reporting
+    def report_tamper(self, kind, detail):
+        """Queue a detection for the server (kept on disk until delivered) and log it. Repeats within a minute are one incident."""
+        now = time.time()
+        if now - self._tamper_seen.get(kind + detail[:40], 0) < 60:
+            return
+        self._tamper_seen[kind + detail[:40]] = now
+        log.warning("TAMPER DETECTED [%s] %s", kind, detail)
+        with self.lock:
+            self.tamper_queue.append({"kind": kind, "detail": detail[:500], "at": datetime.now(timezone.utc).isoformat()})
+            del self.tamper_queue[:-50]
+        try:
+            self.cache.save_state(tamper_queue=self.tamper_queue)
+        except OSError:
+            pass
+        self.hb_event.set()
+
+    def _flush_tamper(self):
+        with self.lock:
+            batch = list(self.tamper_queue[:50])
+        if not batch:
+            return
+        r = self._request("POST", "/device/tamper", json={"events": batch})
+        if r.status_code == 200:
+            with self.lock:
+                del self.tamper_queue[: len(batch)]
+            self.cache.save_state(tamper_queue=self.tamper_queue)
+
+    def _check_restart(self, state):
+        """A start with the 'running' marker still present means the last run did not shut down cleanly."""
+        marker = os.path.join(self.cache.root, "running")
+        if os.path.exists(marker):
+            self.report_tamper("unexpected_restart", "The agent was not shut down cleanly (power cut, kill or crash)")
+        with open(marker, "w", encoding="ascii") as f:
+            f.write(self.boot_id)
+        last = state.get("last_clock")
+        if last and time.time() < last - CLOCK_ROLLBACK_SECONDS:
+            self.report_tamper("clock_rollback", f"System clock is {int(last - time.time())}s behind where it was before the restart")
+
+    def _watch_clock(self):
+        last = getattr(self, "_last_clock", None)
+        now = time.time()
+        if last and now < last - CLOCK_ROLLBACK_SECONDS:
+            self.report_tamper("clock_rollback", f"System clock moved back {int(last - now)}s")
+        self._last_clock = now
+        self.cache.save_state(last_clock=now)
+
+    def _inventory(self):
+        return {**system_info(), "software_version": VERSION, "capabilities": CAPABILITIES, "code_hash": self._code_hash, "boot_id": self.boot_id}
+
+    def _learn_clock(self, r):
+        """Sign with the server's idea of time, so a wrong local clock does not lock this display out."""
+        try:
+            self.identity.clock_offset = parsedate_to_datetime(r.headers["Date"]).timestamp() - time.time()
+        except (KeyError, TypeError, ValueError):
+            pass
 
     def _request(self, method, path, retry_auth=True, **kw):
         if self.sim_offline:
@@ -76,11 +153,17 @@ class DeviceAgent:
             raise Offline("simulated network outage")
         if not self.token and path != "/device/register":
             self.register()
+        body = b""
+        if "json" in kw:
+            body = json.dumps(kw.pop("json")).encode()
+            kw["data"] = body
         try:
-            r = self.http.request(method, self.server + path, headers=self._headers(), timeout=6, **kw)
+            r = self.http.request(method, self.server + path, headers={**self._headers(method, path, body), "Content-Type": "application/json"},
+                                  timeout=6, **kw)
         except requests.RequestException as e:
             self.connected = False
             raise Offline(str(e))
+        self._learn_clock(r)
         if r.status_code == 401 and retry_auth and path != "/device/register":
             log.warning("Token rejected (revoked/expired) - re-registering")
             self.register(stale=self.token)
@@ -96,7 +179,8 @@ class DeviceAgent:
 
     def _register(self):
         r = self._request("POST", "/device/register", retry_auth=False, json={
-            "device_id": self.device_id, "registration_token": self.reg_token, "software_version": VERSION})
+            "device_id": self.device_id, "registration_token": self.reg_token, "public_key": self.identity.public_b64,
+            "hw_fingerprint": hw_fingerprint(), **self._inventory()})
         if r.status_code != 200:
             if time.time() - getattr(self, "_reg_warned", 0) > 30:  # visible, but not every retry
                 self._reg_warned = time.time()
@@ -104,12 +188,21 @@ class DeviceAgent:
                     detail = r.json().get("detail", r.text)
                 except ValueError:
                     detail = r.text[:120]
-                log.warning("Registration failed (%s): %s - check the Device ID and token (run start.sh --reset to re-enter)", r.status_code, detail)
+                if r.status_code == 409:
+                    log.error("%s In the dashboard open the device and choose 'Rotate token', then run ./start.sh --reset with the new token.", detail)
+                else:
+                    log.warning("Registration failed (%s): %s - check the Device ID and token (run start.sh --reset to re-enter)", r.status_code, detail)
             raise Offline(f"registration failed: {r.status_code}")
         body = r.json()
         self.token = body["access_token"]
         self.config = body["config"]
-        self.cache.save_state(token=self.token, config=self.config)
+        key = body.get("server_public_key")
+        if key and not self.server_key:
+            self.server_key = key                 # trust on first use; from now on only playlists signed by this key play
+        elif key and key != self.server_key:
+            self.report_tamper("manifest_signature_invalid", "The server's signing key changed since this display was set up "
+                                                             "(use ./start.sh --reset if the server was rebuilt on purpose)")
+        self.cache.save_state(token=self.token, config=self.config, server_key=self.server_key)
         log.info("Registered with server as %s", self.device_id)
 
     # ------------------------------------------------------------------ sync (content decision -> local cache)
@@ -118,6 +211,15 @@ class DeviceAgent:
         if r.status_code != 200:
             raise Offline(f"content fetch failed: {r.status_code}")
         remote = r.json()
+        if self.server_key:
+            try:
+                signed = verify_manifest(remote["signed"], self.server_key, self.device_id) if remote.get("signed") else None
+                if signed is None:
+                    raise ValueError("playlist arrived without a signature")
+            except ValueError as e:
+                self.report_tamper("manifest_signature_invalid", str(e))
+                raise Offline("rejected an unsigned or wrongly signed playlist; keeping the last good one")
+            remote = signed                       # only the signed content is used
         self.config = remote["config"]
         items = remote["items"]
         now = time.time()
@@ -127,6 +229,8 @@ class DeviceAgent:
         ]
         for item in items:
             if not self.cache.has(item):
+                self._download(item)
+            elif item.get("sha256") and not self._intact(item):
                 self._download(item)
         keep = {self.cache.filename(i) for i in items}
         with self.lock:
@@ -147,7 +251,7 @@ class DeviceAgent:
         if self.sim_offline:
             raise Offline("simulated network outage")
         try:
-            with self.http.get(self.server + item["url"], headers=self._headers(), stream=True, timeout=15) as r:
+            with self.http.get(self.server + item["url"], headers=self._headers("GET", item["url"]), stream=True, timeout=15) as r:
                 if r.status_code != 200:
                     raise Offline(f"download failed: {r.status_code}")
                 with open(tmp, "wb") as f:
@@ -155,7 +259,39 @@ class DeviceAgent:
                         f.write(chunk)
         except requests.RequestException as e:
             raise Offline(str(e))
+        want = item.get("sha256")
+        if want and file_sha256(tmp) != want:
+            os.remove(tmp)
+            self.report_tamper("media_hash_mismatch", f"{item['name']} did not match the signed hash; download discarded")
+            raise Offline("downloaded media failed its integrity check")
         self.cache.commit(tmp, name)
+
+    def _intact(self, item):
+        """True if the cached file still matches the hash the server signed. A changed file is deleted and reported."""
+        name = self.cache.filename(item)
+        p = self.cache.path(name)
+        if p and file_sha256(p) == item["sha256"]:
+            return True
+        if p:
+            self.cache.remove(name)
+            self.report_tamper("cache_tampered", f"{item['name']} in the local cache was modified; removed and re-downloading")
+        return False
+
+    def verify_loop(self):
+        """Re-check the cached files against the signed hashes now and then, so a file swapped while the display is running
+        (or while it is offline) is removed before it can play again."""
+        while not self.stop.wait(VERIFY_EVERY):
+            try:
+                with self.lock:
+                    items = [i for i in self.manifest.get("items", []) if i.get("sha256") and self.cache.has(i)]
+                bad = [i for i in items if not self._intact(i)]
+                if bad:
+                    self.sync_event.set()
+                if code_hash() != self._code_hash:
+                    self.report_tamper("code_modified", "The agent's own files changed while it was running")
+                    self._code_hash = code_hash()
+            except Exception:
+                log.exception("integrity check failed")
 
     def sync_loop(self):
         while not self.stop.is_set():
@@ -192,12 +328,14 @@ class DeviceAgent:
                 payload = {
                     "cpu": psutil.cpu_percent(None), "memory": psutil.virtual_memory().percent,
                     "network": "connected", "gps": pos is not None, "content_version": ver or "",
-                    "content_names": names, "software_version": VERSION,
+                    "content_names": names, **self._inventory(),
                 }
+                self._watch_clock()
                 r = self._request("POST", "/device/heartbeat", json=payload)
                 if r.status_code == 200:
                     self._note_server_state(r.json())
                 self._flush_impressions()
+                self._flush_tamper()
             except Offline as e:
                 log.debug("heartbeat failed: %s", e)
             self.hb_event.wait(self.config.get("heartbeat_interval", 10))
@@ -281,9 +419,13 @@ class DeviceAgent:
                                if b["deadline"] is None or b["deadline"] > time.time()],
                 "position": self.position, "pending_impressions": len(self.impressions),
                 "last_sync": self.last_sync, "moving": getattr(self.gps, "moving", None),
+                "demo_controls": self.demo_controls, "control_token": self.control_token if self.demo_controls else None,
+                "tamper_pending": len(self.tamper_queue), "version": VERSION,
             }
 
     def control(self, data):
+        if not self.demo_controls:
+            return {"ok": False, "error": "demo controls are switched off (set DEMO_CONTROLS=1)"}
         if "offline" in data:
             self.sim_offline = bool(data["offline"])
             log.info("Simulated network %s", "CUT" if self.sim_offline else "RESTORED")
@@ -300,7 +442,7 @@ class DeviceAgent:
         srv = make_server(self, port)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         log.info("Display page: http://localhost:%d/   (press 'd' on it for demo controls)", port)
-        for fn in (self.sync_loop, self.heartbeat_loop, self.location_loop, self.ws_loop):
+        for fn in (self.sync_loop, self.heartbeat_loop, self.location_loop, self.ws_loop, self.verify_loop):
             threading.Thread(target=fn, daemon=True).start()
         self.sync_event.set()
         if open_url:
@@ -310,6 +452,11 @@ class DeviceAgent:
                 time.sleep(1)
         except KeyboardInterrupt:
             self.stop.set()
+        finally:
+            try:
+                os.remove(os.path.join(self.cache.root, "running"))   # a clean stop, so the next start is not reported
+            except OSError:
+                pass
 
 
 def build_gps(args):

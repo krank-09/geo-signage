@@ -3,16 +3,36 @@ so playback never depends on the internet."""
 import json
 import os
 import re
+import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".mp4": "video/mp4", ".webm": "video/webm"}
 
 
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
+
+
 def make_server(agent, port: int) -> ThreadingHTTPServer:
+    """Listens on this machine only (DISPLAY_BIND=0.0.0.0 to open it up, e.g. in Docker). Requests must carry a local Host
+    header, which stops DNS-rebinding pages from talking to it, and /api/control needs the per-run token."""
+    extra = {h.strip().lower() for h in os.getenv("ALLOWED_HOSTS", "").split(",") if h.strip()}
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):  # quiet
             pass
+
+        def _host_ok(self):
+            host = (self.headers.get("Host") or "").lower().rsplit(":", 1)[0] if not (self.headers.get("Host") or "").startswith("[") \
+                else (self.headers.get("Host") or "").lower().split("]")[0] + "]"
+            return host in LOCAL_HOSTS or host in extra
+
+        def parse_request(self):
+            ok = super().parse_request()
+            if ok and not self._host_ok():
+                self.send_error(421, "Misdirected request")
+                return False
+            return ok
 
         def _json(self, obj, code=200):
             body = json.dumps(obj).encode()
@@ -30,6 +50,9 @@ def make_server(agent, port: int) -> ThreadingHTTPServer:
                     body = f.read()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+                                                            "img-src 'self' data:; media-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+                self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -86,8 +109,10 @@ def make_server(agent, port: int) -> ThreadingHTTPServer:
                 agent.record_impression(data)
                 self._json({"ok": True})
             elif self.path == "/api/control":
+                if not secrets.compare_digest(self.headers.get("X-Control-Token", ""), agent.control_token):
+                    return self._json({"ok": False, "error": "control token required"}, 403)
                 self._json(agent.control(data))
             else:
                 self.send_error(404)
 
-    return ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    return ThreadingHTTPServer((os.getenv("DISPLAY_BIND", "127.0.0.1"), port), Handler)

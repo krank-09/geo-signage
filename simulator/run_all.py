@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import time
+import secrets
 import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -30,8 +31,12 @@ DEVICES = [
 ]
 
 
+CONTROL_TOKEN = secrets.token_urlsafe(16)   # shared with the agents we start, so the console can use /api/control
+
+
 def call(port, path, body=None):
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None)
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"X-Control-Token": CONTROL_TOKEN})
     with urllib.request.urlopen(req, timeout=3) as r:
         return json.loads(r.read())
 
@@ -44,10 +49,13 @@ def main():
     args = ap.parse_args()
     offset = args.base_port - 8101
 
+    env = {**os.environ, "CONTROL_TOKEN": CONTROL_TOKEN, "DEMO_CONTROLS": "1"}
+    if os.getenv("IN_DOCKER"):
+        env["DISPLAY_BIND"] = "0.0.0.0"       # the published ports reach the agents from outside the container
     procs = []
     for did, token, port, gps in DEVICES[: args.count]:
         procs.append(subprocess.Popen([sys.executable, AGENT, "--server", args.server, "--device-id", did,
-                                       "--token", token, "--port", str(port + offset), *gps]))
+                                       "--token", token, "--port", str(port + offset), *gps], env=env))
     ports = [d[2] + offset for d in DEVICES[: args.count]]
     time.sleep(1.5)
     print(__doc__)

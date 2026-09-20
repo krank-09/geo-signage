@@ -8,7 +8,9 @@ SAFE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class Cache:
-    def __init__(self, root: str, max_files: int = 20):
+    def __init__(self, root: str, max_files: int = 20, identity=None):
+        self.identity = identity            # signs/verifies state.json so hand edits are noticed
+        self.state_tampered = False
         self.root = os.path.abspath(root)
         self.media = os.path.join(self.root, "media")
         os.makedirs(self.media, exist_ok=True)
@@ -20,9 +22,15 @@ class Cache:
     def load_state(self) -> dict:
         try:
             with open(self.state_path) as f:
-                return json.load(f)
+                wrapped = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return {}
+        if self.identity is None or "data" not in wrapped:
+            return wrapped if self.identity is None else {}   # unsigned or reshaped file: not trusted
+        if not self.identity.mac_ok(wrapped["data"], wrapped.get("mac", "")):
+            self.state_tampered = True
+            return {}
+        return json.loads(wrapped["data"])
 
     def save_state(self, **updates) -> None:
         with self.lock:
@@ -30,7 +38,11 @@ class Cache:
             state.update(updates)
             tmp = self.state_path + ".tmp"
             with open(tmp, "w") as f:
-                json.dump(state, f)
+                if self.identity is None:
+                    json.dump(state, f)
+                else:
+                    data = json.dumps(state, sort_keys=True)
+                    json.dump({"data": data, "mac": self.identity.mac(data)}, f)
             os.replace(tmp, self.state_path)
 
     # -- media files ---------------------------------------------------------------------------
@@ -47,6 +59,11 @@ class Cache:
 
     def has(self, item: dict) -> bool:
         return self.path(self.filename(item)) is not None
+
+    def remove(self, name: str) -> None:
+        p = self.path(name)
+        if p:
+            os.remove(p)
 
     def new_tmp(self, name: str) -> str:
         return os.path.join(self.media, name + ".part")

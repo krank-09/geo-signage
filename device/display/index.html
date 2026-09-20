@@ -69,10 +69,10 @@ const stage = document.getElementById('stage');
 let state = null, signature = '', idx = 0, timer = null, current = null, epoch = 0;
 
 async function ctl(body) {
-  await fetch('/api/control', { method: 'POST', body: JSON.stringify(body) }); poll();
+  await fetch('/api/control', { method: 'POST', headers: { 'X-Control-Token': (state && state.control_token) || '' }, body: JSON.stringify(body) }); poll();
 }
 document.addEventListener('keydown', e => {
-  if (e.key === 'd') { const d = document.getElementById('dev'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; document.body.classList.toggle('dev'); }
+  if (e.key === 'd' && state && state.demo_controls) { const d = document.getElementById('dev'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; document.body.classList.toggle('dev'); }
 });
 
 function impression(item, startedAt) {

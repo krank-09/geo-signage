@@ -8,6 +8,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-ENV PYTHONUNBUFFERED=1 DISPLAY_PORT=8101
+ENV PYTHONUNBUFFERED=1 DISPLAY_PORT=8101 DISPLAY_BIND=0.0.0.0
 EXPOSE 8101
 CMD ["python", "agent.py"]

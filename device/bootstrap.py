@@ -58,7 +58,9 @@ def open_display(url: str, kiosk: bool) -> None:
         exe = next((c for c in candidates if c and os.path.exists(c)), None)
         if exe:
             subprocess.Popen([exe, "--kiosk", "--autoplay-policy=no-user-gesture-required", "--no-first-run",
-                              f"--user-data-dir={os.path.join(tempfile.gettempdir(), 'signage-kiosk')}", url])
+                              "--disable-pinch", "--overscroll-history-navigation=0", "--disable-translate", "--disable-features=TranslateUI",
+                              "--noerrdialogs", "--disable-infobars", "--disable-session-crashed-bubble", "--disable-dev-tools",
+                              "--incognito", f"--user-data-dir={os.path.join(tempfile.gettempdir(), 'signage-kiosk')}", url])
             return
         log.warning("No Chrome/Edge found for kiosk mode - opening the default browser instead (press F11)")
     webbrowser.open(url)

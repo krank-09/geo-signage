@@ -60,7 +60,7 @@ def discover(server: str, gps, root: str, version: str, connection_type: str | N
         pos = gps.read()
         body = {"secret": secret, "name": name, "software_version": version,
                 "latitude": pos[0] if pos else None, "longitude": pos[1] if pos else None,
-                "connection_type": connection_type}
+                "connection_type": connection_type, "enrollment_key": os.getenv("ENROLLMENT_KEY") or None}
         try:
             r = requests.post(server + "/discovery/announce", json=body, headers=headers, timeout=8)
             if r.status_code == 200:
