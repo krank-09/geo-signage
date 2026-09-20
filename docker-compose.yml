@@ -38,6 +38,8 @@ services:
       FIREBASE_AUTH_DOMAIN: ${FIREBASE_AUTH_DOMAIN:-}
       FIREBASE_APP_ID: ${FIREBASE_APP_ID:-}
       FIREBASE_ADMIN_EMAILS: ${FIREBASE_ADMIN_EMAILS:-}
+      DEVICE_AUTH_MODE: ${DEVICE_AUTH_MODE:-optional}
+      SERVER_SIGNING_KEY: ${SERVER_SIGNING_KEY:-}
     depends_on:
       db: { condition: service_healthy }
       minio: { condition: service_started }  # backend retries until MinIO accepts connections

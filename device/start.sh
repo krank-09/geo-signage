@@ -43,6 +43,7 @@ if [ ! -f .env ]; then
     echo "DISPLAY_PORT=8101"
     echo "OPEN_BROWSER=1"
     echo "KIOSK=0"
+    echo "DEMO_CONTROLS=1"   # the demo panel (press d); remove this line on a real display
     echo "$GPS_LINES"
   } > .env
   echo "Saved to .env (run ./start.sh --reset to change it)."

@@ -42,6 +42,7 @@ if "%PLACE%"=="" set PLACE=delhi
   echo DISPLAY_PORT=8101
   echo OPEN_BROWSER=1
   echo KIOSK=0
+  echo DEMO_CONTROLS=1
   echo GPS_MODE=fixed
   echo PLACE=%PLACE%
 ) > .env
@@ -54,6 +55,7 @@ goto env_written
   echo DISPLAY_PORT=8101
   echo OPEN_BROWSER=1
   echo KIOSK=0
+  echo DEMO_CONTROLS=1
   echo GPS_MODE=sim
   echo ROUTE=chandigarh,delhi,jaipur,mumbai
   echo ROUTE_STEPS=8
